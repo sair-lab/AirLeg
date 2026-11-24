@@ -1,0 +1,95 @@
+# Relative paths below are resolved from this YAML file directory.
+model_dir: "../common/models"
+camera_config_path: "camera.yaml"
+voc_path: "../common/models/point_voc_L4.bin"
+
+point_matcher:
+  matcher: 0
+  onnx_file: "superpoint_lightglue.onnx"
+  engine_file: "superpoint_lightglue.engine"
+
+ros_publisher:
+  feature_topic: "/AirSLAM/feature"
+  frame_pose_topic: "/AirSLAM/frame_pose"
+  frame_odometry_topic: "/AirSLAM/LatestOdometry"
+  keyframe_topic: "/AirSLAM/keyframe"
+  path_topic: "/AirSLAM/odometry"
+  map_topic: "/AirSLAM/map"
+  reloc_topic: "/AirSLAM/reloc"
+
+visual_odometry:
+  superpoint:
+    max_keypoints: 600
+    keypoint_threshold: 0.003
+    grid_filter: true
+    grid_cols: 4
+    grid_rows: 3
+    h_thr: 0.003
+    l_thr: 0.001
+    remove_borders: 4
+    dla_core: -1
+    input_tensor_names: ["input"]
+    output_tensor_names: ["scores", "descriptors"]
+    onnx_file: "superpoint_v1_sim_int32.onnx"
+    engine_file: "superpoint_v1_sim_int32.engine"
+
+  keyframe:
+    min_init_stereo_feature: 90
+    lost_num_match: 10
+    min_num_match: 30
+    max_num_match: 80
+    tracking_point_rate: 0.65
+    tracking_parallax_rate: 0.1
+
+  optimization:
+    tracking:
+      mono_point: 50
+      stereo_point: 75
+
+    backend:
+      mono_point: 50
+      stereo_point: 75
+
+  ros_publisher:
+    feature: 1
+    frame_pose: 1
+    keyframe: 1
+    map: 1
+    reloc: 0
+
+map_refinement:
+  optimization:
+    mono_point: 50
+    stereo_point: 75
+
+  ros_publisher:
+    feature: 0
+    frame_pose: 0
+    keyframe: 1
+    map: 1
+    reloc: 0
+
+relocalization:
+  min_inlier_num: 45
+  pose_refinement: 1
+
+  superpoint:
+    max_keypoints: 400
+    keypoint_threshold: 0.004
+    remove_borders: 4
+    dla_core: -1
+    input_tensor_names: ["input"]
+    output_tensor_names: ["scores", "descriptors"]
+    onnx_file: "superpoint_v1_sim_int32.onnx"
+    engine_file: "superpoint_v1_sim_int32.engine"
+
+  pose_estimation:
+    mono_point: 50
+    stereo_point: 75
+
+  ros_publisher:
+    feature: 1
+    frame_pose: 1
+    keyframe: 1
+    map: 1
+    reloc: 1

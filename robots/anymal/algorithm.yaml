@@ -1,0 +1,75 @@
+# ANYmal D + Alphasense front stereo (GrandTour; 720x540 fisheye, rectified by AirSLAM). Common settings:
+# robots/common/algorithm.yaml (with the shared landmark back-end); paths relative to this file.
+base: ../common/algorithm.yaml
+camera_config_path: camera.yaml
+
+visual_odometry:
+  use_imu: true                # GrandTour: IMU in the front-end attitude filter and the Y2F back-end (camera.yaml)
+  online:
+    leg:
+      time_delay: 0.0          # t_leg = t_camera + time_delay（s），与 leg_odometry.yaml (online:) 一致（GrandTour 传感器经 PTP 同步）
+    surface:
+      foot_radius: 0.031455    # ANYmal foot collision sphere (m)
+      # 足端约束（每 10 节点求解，common backend.trigger）。脚的位置修正：足端-地形残差拟合（5 条硬地面序列），
+      # FFS 地面与双目路标一致，偏差在相机-机身-腿的链上；old_plane：高程图旧平面约束（≥30 s 前的超级帧平面）。
+      foot_corr_roll_deg: 1.4726
+      foot_corr_pitch_deg: 0.0607
+      foot_corr_dz: 0.01732
+      old_plane: true
+    # S3 back-end with IMU preintegration (velocity / bias states, one bias block per node, free world gravity
+    # direction, camera-IMU rotation correction; IMU from camera.yaml, imu_mode 2) and window marginalisation (every
+    # solve eliminates the window's map points into pairwise relative-pose factors instead of the fixed-sigma visual
+    # edge), visual translation scale state, VCE without the full-information factors; the back-end solves in its own
+    # thread. Without an IMU: imu_mode 0 in camera.yaml and imu: false below.
+    # Plus the shared landmark back-end (common/algorithm.yaml): 100 selected landmarks, fixed initial LM damping,
+    # sanity checks, landmark fallback 0.2, zero-velocity factor, analytic landmark Jacobians, VCE without them.
+    # Landmark fallback 0.2 makes the offline result insensitive to tiny (1e-7 m) perturbations at equal accuracy.
+    backend:
+      sink_rw: 0.0005          # 接触偏移近似常数（脚的偏差已由 surface.foot_corr_* 修正）
+      imu: true
+      imu_bias_block: 1
+      imu_gravity_free: true
+      # absolute roll / pitch factor at zupt-stationary nodes (bias-corrected mean accelerometer, sigma per node):
+      # keeps the free gravity direction from following tilted poses after an outage. Fixing the gravity direction
+      # instead (imu_gravity_free: false) is less accurate.
+      tilt_prior: true
+      tilt_sigma_deg: 1.0
+      imu_ext_rot: true
+      vce_skip_full: true
+      sanity_ext_deg: 30
+      zupt: true
+      # gyro bias unification with backend.gyro_bias_total (robots/common/algorithm.yaml): the raw 400 Hz IMU gyro of the
+      # attitude filter and the back-end IMU factors gets the network correction of the nearest 100 Hz network sample;
+      # R_BI = the worker's IMU extrinsic (base <- IMU).
+      net_gyro: true
+      net_gyro_R_BI: [-1, 0, 0, 0, 1, 0, 0, 0, -1]
+      # passive motion and camera dropouts: no leg / zero-velocity factor at a node
+      # reached without a step but with > 0.1 m visual translation (robot carried); no IMU factor over a > 3 s interval
+      # while moving.
+      imu_max_dt: 3.0
+      passive_vo_t: 0.1
+      passive_foot_m: 0.01
+      # online VCE with the landmark edges: with vce_skip_landmarks only leg / prior / foot
+      # rows remain, fewer than the states, so VCE never ran ("no residual degrees of freedom"); the 30 lowest-id landmarks
+      # suffice.
+      vce_skip_landmarks: false
+      vce_landmarks: 30
+  # Front end: official descriptor sampling, leg gate (loose), voxel cap, degraded mode, lost frames prefer the leg pose.
+  superpoint:
+    official_desc_sampling: true
+  # leg_gate: the defaults of robots/common/algorithm.yaml (loose gate, passive mode)
+  # stereo outliers: only the epipolar check of the rectified pair (|y_l - y_r| <= camera max_y_diff, Frame::
+  # AddRightFeatures)
+  voxel_cap:
+    enabled: true
+  degraded:
+    enabled: true
+    # A probe keyframe also when the last keyframe is older than 5 s, so a robot
+    # standing still while lost no longer outlives the 60 s leg buffer and freezes in the degraded mode.
+    probe_max_dt: 5.0
+  keyframe:
+    lost_prefer_leg: true
+
+map_refinement:
+  leg_odom:
+    time_delay: 0.0

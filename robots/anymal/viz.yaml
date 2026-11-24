@@ -1,0 +1,6 @@
+# robot_viz (ros2_packages/airslam/launch/robot_viz.launch.py): ANYmal D with its meshes (model/anymal_d_simple_description,
+# ANYbotics, BSD 3-Clause). The estimation keeps using leg_odometry.yaml robot: model (anymal_d_kinematic.urdf).
+model: model/anymal.urdf
+# anymal.urdf keeps the ANYbotics joint names; in the leg-input order FR FL RR RL x hip thigh calf (same angles as the
+# Unitree-named kinematic model, which make_kinematic_urdf.py only renames / folds)
+joint_names: [RF_HAA, RF_HFE, RF_KFE, LF_HAA, LF_HFE, LF_KFE, RH_HAA, RH_HFE, RH_KFE, LH_HAA, LH_HFE, LH_KFE]

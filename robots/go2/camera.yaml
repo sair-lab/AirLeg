@@ -1,0 +1,54 @@
+%YAML:1.0
+
+image_height: 480
+image_width: 640
+use_imu: 0
+left_image_topic: "/camera/camera/infra1/image_rect_raw"
+right_image_topic: "/camera/camera/infra2/image_rect_raw"
+# IMU of the front-end attitude filter and the S3 back-end: the Go2 body IMU in /lowstate_stamped (the same IMU as the leg
+# odometry, ~500 Hz). The D455 IMU (/camera/camera/imu, imu_message: imu) would need its own T_imu_cam0 / noise.
+imu_topic: "/lowstate_stamped"
+imu_message: lowstate
+
+depth_lower_thr: 0.1
+depth_upper_thr: 10.0
+max_y_diff: 2
+
+# Calibration
+distortion_type: 0  # 0 for undistorted inputs, 1 for radial-tangential: [k1, k2, p1, p2, k3], 2 for equidistant/fisheye:  [k1, k2, k3, k4, 0].
+cam0:
+  intrinsics: [391.20672607421875, 391.20672607421875, 326.7033386230469, 238.7154083251953] # fx, fy, cx, cy
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0, 0]
+  T_type: 0           # 0 for Euroc format, the following T is Tbc. 1 for Kalibr format, the following T is Tcb
+  T: 
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+cam1:
+  intrinsics: [391.20672607421875, 391.20672607421875, 326.7033386230469, 238.7154083251953] # fx, fy, cx, cy
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0, 0]
+  T_type: 0           
+  T: 
+    - [1.0, 0.0, 0.0, 0.095040894958]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+
+# --- IMU (imu_mode 2: front-end attitude filter, gravity-aligned initial pose; raw samples to the S3 back-end) ---
+imu_mode: 2                 # 1 VIO (preintegration), 2 gravity only (attitude-filter priors)
+T_imu_cam0:                 # cam0 (infra1) pose in the Go2 body IMU frame, Kalibr calibration (cam0 T_imu_cam)
+    - [-0.0144799, 0.00758217, 0.99986641, 0.16564478]
+    - [-0.99987886, 0.00560058, -0.01452255, 0.04899707]
+    - [-0.00570995, -0.99995557, 0.00750016, 0.2156177]
+    - [0.0, 0.0, 0.0, 1.0]
+attitude_kp: 0.3
+attitude_ki: 0.003
+rate_hz: 500
+# continuous noise densities: white noise = Go2 body IMU, vibration-inclusive (60-180 Hz PSD of the raw
+# lowstate IMU while walking); random walks EuRoC
+gyroscope_noise_density: 5.326192e-03
+accelerometer_noise_density: 5.641598e-02
+gyroscope_random_walk: 1.9393e-05
+accelerometer_random_walk: 3.0e-03
+g_value: 9.81

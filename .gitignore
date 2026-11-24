@@ -1,0 +1,42 @@
+.idea
+cmake-build-debug
+datasets
+build/*
+build_ros2/*
+log/*
+saving/*
+data/*
+# *.jpg
+# *.png
+# TensorRT engines are built on first use and cached next to their ONNX (GPU / TensorRT specific); the temporary
+# files of an interrupted atomic save too
+*.engine
+*.engine.tmp.*
+.vscode/*
+model/*
+weights/*
+debug/*
+cache/*
+*.so
+__pycache__/
+*.py[cod]
+.codex
+install/*
+build/*
+debug.txt
+*.pyc
+
+# Local experiment verification scripts and test artifacts.
+/core/tests/
+
+# robots/<robot>/model holds the kinematics models (tracked, unlike other model/ dirs); robots/<robot>/checkpoints
+# (S1 / S2 leg odometry networks) and robots/common/models (ONNX, vocabulary) are tracked; TensorRT engines are not.
+!robots/*/model/*
+
+# core/3rdparty/TRAIL (leg-odometry training): experiment outputs, caches, logs and checkpoints of runs; the released
+# checkpoints live in robots/<robot>/checkpoints
+/core/3rdparty/TRAIL/runs/
+/core/3rdparty/TRAIL/cache/
+/core/3rdparty/TRAIL/logs/
+/core/3rdparty/TRAIL/**/*.pt
+/core/3rdparty/TRAIL/**/*.pth

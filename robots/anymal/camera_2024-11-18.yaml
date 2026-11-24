@@ -1,0 +1,63 @@
+%YAML:1.0
+# GrandTour 2024-11-18 missions: camera.yaml with the right camera (cam1) rotated by rotvec [0.121, 0.35, -0.017] deg
+# (in cam1). On 11-18 the rectified left/right matches have a y offset of ~+1.0 px (other days <= 0.3 px): pitch/roll
+# from that y offset. Yaw from the disparity-offset self-calibration (common/stereo_selfcal.py, images only). Used for
+# the 11-18 bags by leg_odometry.yaml (sim_to_real:) prepare.camera_configs; S3 of an 11-18 mission: launch with
+# camera_config_path:=camera_2024-11-18.yaml.
+# ANYmal D GrandTour, Sevensense Alphasense front_left (cam0) / front_right (cam1): global shutter, equidistant (fisheye)
+# model, 1440x1080 recorded, halved to 720x540 by the VO node (fx/2, fy/2, (c + 0.5)/2 - 0.5; the
+# equidistant coefficients do not change). Calibration from the GrandTour camera_info and /tf_static (identical on all
+# missions). cam0 = left camera = body frame of the rig; AirSLAM rectifies (cv::fisheye, distortion_type 2).
+image_height: 540
+image_width: 720
+use_imu: 0
+left_image_topic: "/boxi/alphasense/front_left/image_raw/compressed"
+right_image_topic: "/boxi/alphasense/front_right/image_raw/compressed"
+# The recorded 1440x1080 grey JPEGs (front_left of the upside-down 2024-11-18 missions repaired in the bags by
+# convert_grandtour_to_ros2.py): the VO node decodes them and resizes them to image_width x image_height (INTER_AREA).
+# IMU of the front-end attitude filter and the S3 back-end: the recorded /anymal/imu (400 Hz, IMU frame), the IMU of the
+# leg odometry
+imu_topic: "/airslam/imu_resampled"   # /anymal/imu at the joint stamps (imu_resampler, leg_odometry.yaml robot: leg_inputs)
+imu_message: imu
+
+depth_lower_thr: 0.1
+depth_upper_thr: 15.0
+max_y_diff: 2
+
+distortion_type: 2  # equidistant [k1, k2, k3, k4] (fifth value unused)
+cam0:
+  intrinsics: [350.727286351, 350.058955376, 339.879273260, 268.589707905] # fx, fy, cx, cy
+  distortion_coeffs: [-0.0384362279278, -0.00263417724826, 0.00242294953937, -0.0013826912947, 0]
+  T_type: 0
+  T:
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+cam1:
+  intrinsics: [350.832848534, 350.425210832, 337.681438313, 267.079179337]
+  distortion_coeffs: [-0.0445939378293, 0.0123785293439, -0.0131345109298, 0.00389577728514, 0]
+  T_type: 0           # T = T_cam0_cam1 (pose of the right camera in the left camera frame), baseline 0.1101 m
+  T:
+    - [0.999737795176, 0.020821491087, 0.009529239537, 0.110077144144]
+    - [-0.020796298212, 0.999779991988, -0.002735251908, -0.000468658258]
+    - [-0.009584095052, 0.002536361805, 0.999950854787, -0.001200930919]
+    - [0, 0, 0, 1]
+
+# --- IMU (imu_mode 2: front-end attitude filter, gravity-aligned initial pose; raw samples to the S3 back-end) ---
+imu_mode: 2                 # 1 VIO (preintegration), 2 gravity only (attitude-filter priors)
+T_imu_cam0:                 # cam0 pose in the ANYmal IMU frame: translation GrandTour /tf_static, rotation hand-eye
+                            # calibrated (VO keyframe rotations vs gyro integration, 28 S2 training sequences; 1.2 deg from /tf_static)
+    - [0.002376298234, 0.176086240546, -0.984371875409, -0.701615985674]
+    - [-0.999993473939, -0.002260319332, -0.002818339216, 0.062394989550]
+    - [-0.002721265537, 0.984372148553, 0.176079720204, -0.135784284064]
+    - [0.000000000000, 0.000000000000, 0.000000000000, 1.000000000000]
+attitude_kp: 0.3
+attitude_ki: 0.003
+rate_hz: 400
+# continuous noise densities (white: estimated from static windows; random walk: EuRoC preset)
+gyroscope_noise_density: 0.00019170938411396744
+accelerometer_noise_density: 0.0018370917861533804
+gyroscope_random_walk: 1.9393e-05
+accelerometer_random_walk: 0.003
+g_value: 9.80766

@@ -1,0 +1,300 @@
+# Common algorithm settings of all robots. A robot config robots/<robot>/algorithm.yaml names this file with
+# `base:` and adds its camera (camera_config_path, point_matcher image size = camera size) and calibration keys;
+# keys given there override the ones here (deep merge, see core/include/read_configs.h LoadYamlWithBase).
+# Relative paths below are resolved from this YAML file directory.
+model_dir: "models"
+voc_path: "models/point_voc_L4.bin"
+
+point_matcher:
+  matcher: 0
+  onnx_file: "superpoint_lightglue.onnx"
+  engine_file: "superpoint_lightglue.engine"
+
+ros_publisher:
+  feature_topic: "/AirSLAM/feature"
+  frame_pose_topic: "/AirSLAM/frame_pose"
+  frame_odometry_topic: "/AirSLAM/LatestOdometry"
+  keyframe_topic: "/AirSLAM/keyframe"
+  path_topic: "/AirSLAM/odometry"
+  map_topic: "/AirSLAM/map"
+  reloc_topic: "/AirSLAM/reloc"
+
+visual_odometry:
+  # IMU in the VO front-end (camera yaml imu_mode: attitude filter -> gravity-aligned initial pose; raw samples to the
+  # back-end) and in the S3 back-end fusion (online.backend.imu: preintegration factors). false ignores the camera IMU
+  # settings. The leg odometry always uses the IMU of /lowstate_stamped, independent of this switch.
+  # Launch override: use_imu:=true|false.
+  use_imu: false
+  superpoint:
+    max_keypoints: 600
+    keypoint_threshold: 0.003   # grid_filter 打开时不用：改用下面的 h_thr / l_thr（h/l 缺省时才回退到此值）
+    grid_filter: true
+    grid_cols: 4
+    grid_rows: 3
+    h_thr: 0.003
+    l_thr: 0.001
+    remove_borders: 4
+    input_width: 0            # 0 = 原生分辨率（需配合下方 χ² 12/16；单独使用后端变差）
+    input_height: 0
+    dla_core: -1
+    input_tensor_names: ["input"]
+    output_tensor_names: ["scores", "descriptors"]
+    onnx_file: "superpoint_v1_sim_int32.onnx"
+    engine_file: "superpoint_v1_sim_int32.engine"
+
+  # 在线动态物体去除：YOLO11n-seg（TensorRT FP16）只分割校正后的左目，去掉落在掩码上的左目特征；默认关闭。
+  # 图像缩到长边 input_size 再分割。较小的输入（416）掩码质量明显下降，故默认 640（约 1.5 ms/帧）。
+  # 与 launch 参数 dynamic_mask_dir（离线掩码）互斥。
+  dynamic_mask:
+    enabled: false
+    onnx_file: "yolo11n_seg.onnx"   # models 目录（Ultralytics YOLO11n-seg，AGPL-3.0；scripts/export_yolo_seg_onnx.py 可重新导出）；
+                                    # 按输入尺寸缓存 engine（yolo11n_seg_<w>x<h>_fp16.engine）
+    input_size: 640                 # 网络输入长边（32 的倍数），短边按比例
+    confidence: 0.25
+    iou: 0.7                        # 同类 NMS
+    max_detections: 100
+    dilate_px: 7                    # 掩码膨胀（图像像素）
+    classes: [0, 1, 2, 3, 5, 6, 7, 14, 15, 16, 17, 18, 19]   # COCO：人、自行车、汽车、摩托、公交、火车、卡车、鸟猫狗马羊牛
+
+  # 腿式门控（只在 S3 在线腿式融合时生效，纯视觉 / VIO 不受影响）：帧的视觉位姿与腿式预测（参考关键帧 × 腿式相对运动）
+  # 的马氏距离超过 frame_chi2 时按跟丢处理并用腿式位姿；单个观测超过 obs_chi2 时不用。被动模式（冰面打滑、被推动）：
+  # 0.5 s 内没有脚相对机身移动超过 passive_foot_m，且 PnP 位姿离腿式预测超过 passive_vis_t 时，到下一次迈步前不用腿式先验
+  # 和门控，用 PnP 初值，每 passive_kf_s 秒补一个关键帧。
+  # 默认打开（视觉低估位移时，例如上楼梯，避免后端修正出现跳变）；Go2 在 robots/go2/algorithm.yaml 里关闭。
+  leg_gate:
+    enabled: true
+    cov_scale: 9.0
+    frame_chi2: 30.0
+    passive: true
+    passive_foot_m: 0.01
+    pnp_init: true
+    passive_kf_s: 1.0
+    passive_vis_t: 0.1
+
+  keyframe:
+    min_init_stereo_feature: 90
+    lost_num_match: 10
+    min_num_match: 30
+    max_num_match: 80
+    tracking_point_rate: 0.55
+    tracking_parallax_rate: 0.1
+
+  optimization:
+    # χ² 外点门限 12 / 16（AirSLAM 原值 50 / 75）。需与原生分辨率一起用；单开原生分辨率后端反而变差。
+    tracking:
+      mono_point: 12
+      stereo_point: 16
+
+    backend:
+      mono_point: 12
+      stereo_point: 16
+
+  ros_publisher:
+    feature: 1
+    frame_pose: 1
+    keyframe: 1
+    map: 1
+    reloc: 0
+
+  # S3 在线自适应：online_adapt（融合+在线微调）| fusion_only（仅融合）| visual_only（纯视觉，原流程）。
+  # launch 参数 online_mode 可覆盖此处（online_mode:=fusion_only 关闭在线微调）；未列出的参数使用代码默认值（read_configs.h）。
+  # 默认 online_adapt：在线微调（backbone 末层 FFN 的 rank-1 LoRA，1280 个参数，只改线速度，角速度 head 不动），
+  # 后端监督加质量门控；陀螺零偏只由后端估计并回传（backend.gyro_bias_total）
+  # （robots/common/leg_odometry.yaml (online:) train / bias）。
+  online:
+    mode: online_adapt
+    leg_topic: /airslam/leg_odom
+    # 在线微调的监督：true = 后端关键帧位姿（<path_topic>/backend，需 backend.enabled），前端路径只作门控参照；
+    # false = 前端关键帧路径（会学到 VO 自身的偏差）。true 时 launch 以 online_adapt 启动足式节点（mode 不为 visual_only 时）。
+    leg_lora: true
+    # 机器人加速度计（backend.leg_reliability 的振动特征）
+    accel_topic: /lowstate_stamped
+    # 普通帧跟踪时加入参考关键帧 -> 当前帧的足式先验边。
+    frame_leg_prior: true
+    # 跟踪初值 = 参考关键帧 × 足式相对运动（视觉跟丢时位姿沿足式继续）。
+    leg_init_guess: true
+    buffer_s: 60.0            # 足式流与加速度计的缓存长度（s，C++ 侧；Python worker 的 buffer_s 见 robots/<robot>/leg_odometry.yaml (online:)）
+    # 足式相对位姿因子；T_C_B 由 leg 节点从 S2 checkpoint 发布（下方外参仅作后备）。
+    leg:
+      rotation_sigma: 0.02     # 残差协方差下限（rad）
+      translation_sigma: 0.01  # 残差协方差下限（m）
+      huber_delta: 2.5
+    # 超级帧稠密深度 + 足端-地面约束（需 AIRSLAM_WITH_FFS=ON 编译，默认开启）。
+    surface:
+      enabled: true
+      max_slope_deg: 5.0       # 前端关联门控与后端一致
+      max_rmse: 0.01
+      ffs_yaml: ../../core/3rdparty/ffs_infer/ffs.yaml  # 相对路径按本文件目录解析；模型在 robots/common/models
+      min_depth: 0.3           # 保守的有效深度范围（m）
+      max_depth: 3.5
+      voxel_xy: 0.02           # 水平体素（m）
+      voxel_z: 0.01            # 竖直体素（m），比水平更细
+      num_anchor_superframes: 3
+      contact_offset_margin: 0.08  # 足端-平面验证门控允许的最大接触偏移（m），= 后端 max(-sink_min, sink_max)
+      # 前端只做足端-地面关联；足端边与接触偏移只在后端估计（backend.foot、backend.sink_*）。
+    # 轻量后端：已定稿关键帧的位姿图（视觉压缩边 + 足式边 + 足端边），独立线程。
+    # 输出：<frame_odometry_topic>/backend 话题、saving_dir/trajectory_backend.txt。
+    backend:
+      enabled: true
+      # 默认 stride。开足端约束（FFS 超级帧）时按超级帧触发的求解约是每 10 节点的 3 倍，在线 LoRA 收到的路径也多 3 倍，
+      # 腿的尺度因此有偏；不开 FFS 时两者相同。
+      trigger: stride           # 每 stride 个新节点求解一次（含后端 VCE）；superframe：每个定稿的超级帧一次
+      window: 50                # 滑窗节点数，窗口外节点固定
+      stride: 10                # trigger=stride 时的间隔；trigger=superframe 时连续 10 个节点无超级帧也求解一次
+      vce: true                 # 足式（旋转/水平/竖直）与足端组的方差尺度，限制在 [vce_lower, vce_upper]
+      vce_lower: 0.5
+      vce_upper: 2.0
+      foot: true
+      foot_max_slope_deg: 5.0   # 坡面上的足端边不加
+      degen: true               # 按共视点数和分布给视觉边降权，跟丢时只留足式边
+      leg_slip: true            # 支撑足打滑量超过滑动中位数时放大足式平移方差（上限 10 倍）
+      gyro_bias: true           # 估计足式旋转的残余陀螺零偏（每 10 个节点一段，随机游走）
+      # 零偏统一：足式角速度加回 worker 减掉的零偏，后端估计总零偏，每次求解后发布最新一段到
+      # /airslam/backend/gyro_bias，worker 以它为唯一零偏（s3.yaml bias.source: backend，不做视觉 GN）。
+      # 有 IMU 的机器人再开 net_gyro（见 robots/anymal/algorithm.yaml）。需 gyro_bias。
+      gyro_bias_total: true
+      # 足式平移的三维线速度偏置（base 系，m/s）：每段 = 两个超级帧之间的关键帧，段间随机游走 leg_vbias_rw，首段先验
+      # leg_vbias_prior；需 gyro_bias。把足式尺度 / 漂移拉向视觉：视觉准时有益，视觉有偏时有害（Go2）。默认关闭。
+      leg_vbias: false
+      leg_corr_superframe: 1    # 1：按超级帧分段；0：每 leg_vbias_block 个节点一段
+      leg_vbias_block: 20
+      leg_vbias_prior: 0.05
+      leg_vbias_rw: 0.01
+      write_back: false         # 后端位姿回写前端关键帧和地图点（前端更准，后端精度略降）
+      # 在线学习足式边可靠性：由区间特征（打滑量、速度、角速度、网络方差、振动）回归后端足式残差，作为足式平移方差的
+      # 相对缩放 [0.3, 10]（收益小），默认关闭。
+      leg_reliability: false
+      # 路标后端（anymal 和 go2 共用）：窗口内 100 个精选路标的重投影边（尺度化
+      # 双目）+ 其余点的窗口边缘化（成对相对位姿因子）+ 视觉尺度状态 + 视觉-腿式门限。各机器人只另加 IMU 设置。
+      # 门限：前端平移与腿式矛盾（固定 sigma chi2 > 36）的节点去掉其边缘化因子（win_leg_chi2），并在此处截断路标轨迹
+      # （land_leg_chi2）：重复地面纹理上前端会重新关联点、低估运动，而大量匹配仍保持一致。
+      export_extras: true      # map point observations, sensor meta, IMU samples (inputs of the landmarks / win_pair / imu)
+      visual_marg: win_pair
+      vo_scale: true
+      vo_scale_prior: 0.20
+      win_leg_chi2: 36
+      visual_mode: landmarks
+      landmarks_max: 100
+      lm_lambda_init: 100       # fixed initial LM damping
+      sanity_vo_scale: 0.5      # reject a solve whose |visual scale offset| exceeds 0.5
+      # selected landmarks come from the front end's tracked points, so > 20 % outliers already means vision and the
+      # fused poses disagree -> drop this solve's landmarks (removes sporadic deviations)
+      land_fallback: 0.2
+      land_leg_chi2: 36
+      land_analytic: true       # analytic landmark Jacobians
+      vce_skip_landmarks: true  # VCE without the landmark edges
+
+map_refinement:
+  loop_verification:
+    min_group_size: 1    # 1 also accepts single loops; the pose graph still rejects outliers
+    min_covisibility_weight: 1
+    translation_ratio: 0.1
+    min_translation_threshold: 0.5
+    rotation_ratio: 0.1
+    min_rotation_threshold_deg: 30.0
+    # 组内回环互相矛盾（重复结构混叠）时，保留对 S3 后端轨迹修正量最小的一簇；最好两簇相差 < ambiguity_margin（m）则整组拒绝。
+    # 地图目录没有该文件时退回原逻辑。
+    odometry_poses: trajectory_backend.txt
+    ambiguity_margin: 1.0
+
+  optimization:
+    mono_point: 50
+    stereo_point: 75
+
+  # Leg-odometry settings of the map-refinement BA (S2 rounds, map_optimization_backend ba). Keep disabled
+  # for the original visual-only pipeline.
+  leg_odom:
+    # ba 模式是否加足式因子（S2 调度器自行设置）；ROS 地图优化 mode full 开启时调用 S4 全局后端（TRAIL pipeline.py s4）。
+    enabled: true
+    # 是否为每个关键帧优化 [vx, vy, vz, wx, wy, wz] 六维速度偏置。
+    use_bias: false
+    # 是否将足式里程计机体坐标系到相机坐标系的外参 T_C_B 设为优化变量。
+    optimize_extrinsic: true
+    # 是否用模型估计的外参及其 sigma 对 T_C_B 添加先验约束。
+    use_extrinsic_prior: true
+    # 是否优化相机时间与足式数据时间之间的全局时间延迟。
+    optimize_time_delay: false
+    # mode full 调用 S4（pipeline.py s4）的 Python 可执行文件；从 PATH 查找，运行前需激活 TRAIL 环境。
+    python_executable: "python3"
+    # 时间延迟优化允许的下界，单位为秒。
+    time_delay_min: -0.2
+    # 时间延迟优化允许的上界，单位为秒。
+    time_delay_max: 0.2
+    # 足式相对旋转残差的基础标准差，单位为弧度。
+    rotation_sigma: 0.08
+    # 足式相对平移残差的基础标准差，单位为米。
+    translation_sigma: 0.01
+    # 六维速度偏置零均值先验的标准差。
+    bias_prior_sigma: 0.25
+    # 相邻关键帧六维速度偏置随机游走的标准差系数。
+    bias_random_walk_sigma: 0.05
+    # 外参旋转先验的标准差，单位为弧度。
+    extrinsic_rotation_prior_sigma: 0.20
+    # 外参平移先验的标准差，单位为米。
+    extrinsic_translation_prior_sigma: 0.20
+    # 时间延迟零均值先验的标准差，单位为秒。
+    time_delay_prior_sigma: 0.03
+    # 足式相对位姿因子使用的 Huber 鲁棒核阈值。
+    huber_delta: 2.5
+    # 建立足式积分边所需的最小关键帧时间间隔，单位为秒。
+    min_keyframe_dt: 0.001
+
+  ros_publisher:
+    feature: 0
+    frame_pose: 0
+    keyframe: 1
+    map: 1
+    reloc: 0
+
+relocalization:
+  min_inlier_num: 45
+  pose_refinement: 1
+
+  superpoint:
+    max_keypoints: 400
+    keypoint_threshold: 0.004   # 重定位：400 点、阈值 0.004、无网格（VO 为 600 / 0.003 / 网格），沿用 AirSLAM 原设置
+    remove_borders: 4
+    dla_core: -1
+    input_tensor_names: ["input"]
+    output_tensor_names: ["scores", "descriptors"]
+    onnx_file: "superpoint_v1_sim_int32.onnx"
+    engine_file: "superpoint_v1_sim_int32.engine"
+
+  pose_estimation:
+    mono_point: 50
+    stereo_point: 75
+
+  ros_publisher:
+    feature: 1
+    frame_pose: 1
+    keyframe: 1
+    map: 1
+    reloc: 1
+
+# S4 全局后端（pipeline.py s4 --robot <名>）：读本机器人 algorithm.yaml 合并后的 global_backend:。
+# S4 = global back-end (pipeline.py run_s4_global): loops of the S3 map, the S3 back-end graph over the whole trajectory
+# with the loop edges and iterated VCE, then the map points on these poses. The network is not fine-tuned.
+# Needs a map saved by an S3 online run with the back-end (backend_nodes.csv / backend_feet.csv).
+global_backend:
+  # overrides of visual_odometry.online.backend for the one global solve over the whole trajectory
+  backend:
+    window: 100000            # one window: all nodes
+    stride: 100000
+    trigger: stride           # a single solve when all nodes are in
+    iterations: 30
+    vce: true
+    vce_rounds: 5             # VCE + re-solve iterations (one update is limited to a factor vce_step)
+    vce_lower: 0.1
+    vce_upper: 10.0
+    loop_sigma: [0.01, 0.05, 0.05, 0.05]   # loop edges: rad, m
+    # joint solve: every S3 map point seen by >= 2 nodes as a landmark (reprojection
+    # edges), no window marginalisation, no landmark fallback, VCE over all landmarks with the point check. Needs the
+    # back-end extras of the S3 run (backend_points.csv, export_extras).
+    visual_mode: landmarks
+    landmarks_max: 100000000
+    landmarks_voxel: 0.001
+    landmarks_min_nodes: 2
+    visual_marg: none
+    land_fallback: 0.0
+    vce_landmarks: 0
+    vce_point_check: true

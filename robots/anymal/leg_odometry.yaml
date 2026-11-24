@@ -1,0 +1,168 @@
+# ANYmal D（GrandTour） 的腿式里程计配置：机器人描述 + S1 / S2 / S3。公共设置在 ../common/leg_odometry.yaml（按段深度合并），
+# 相对路径按本文件所在目录解析。
+base: ../common/leg_odometry.yaml
+
+# ===== robot: 机器人描述（运动学模型、频率、足端半径、Jacobian 压力参数、recorder 默认参数、数据集登记；TRAIL common/robot.py） =====
+robot:
+  # ANYmal D + Alphasense front stereo (GrandTour, 720x540 after halving the 1440x1080 fisheye images). Robot descriptor
+  # read by TRAIL common/robot.py; relative paths are relative to this file.
+  name: anymal
+  # Unitree-named kinematic model generated from model/anymal.urdf (ANYbotics/anymal_d_simple_description, sha256
+  # d9f393ca...cf54) by TRAIL data_scripts/make_kinematic_urdf.py: fixed frames folded into the revolute joints, foot point =
+  # centre of the foot collision sphere, imu_joint = the ANYmal IMU (inverted)
+  model: model/anymal_d_kinematic.urdf
+  network_rate_hz: 100           # every 4th joint-state sample (400 Hz); the simulation (200 Hz) is decimated by 2
+  # leg odometry inputs (recorder, S3 online node; ros2_packages/leg_odom_recorder sources.py): the joints of the
+  # recorded AnymalState (anymal_msgs, ros2_packages/anymal_msgs) and /anymal/imu linearly interpolated at the joint
+  # stamps (both 400 Hz, not phase locked; gaps <= 5 ms), in place of a Go2-style /lowstate_stamped. names: the ANYmal
+  # joints in the internal order FR FL RR RL x hip thigh calf (= RF LF RH LH x HAA HFE KFE)
+  leg_inputs:
+    joints:
+      topic: /anymal/state_estimator/anymal_state
+      message: anymal_state
+      names: [RF_HAA, RF_HFE, RF_KFE, LF_HAA, LF_HFE, LF_KFE, RH_HAA, RH_HFE, RH_KFE, LH_HAA, LH_HFE, LH_KFE]
+    imu:
+      topic: /anymal/imu
+      max_gap_s: 0.005
+      # VO 的 IMU：imu_resampler.py 把 IMU 插值到关节时刻后发布（与腿式网络、后端腿式因子同一时间基准；论文的 GrandTour 转换
+      # 也是这样喂给 VO 的）。相机配置 imu_topic 同此。
+      resampled_topic: /airslam/imu_resampled
+  foot_radius: 0.031455          # m (foot collision sphere)
+  # IMU pose in the base frame (common/frames.py): the model's imu_joint, xyz (-0.25565, 0.00255, 0.07672), rpy (pi, 0, pi)
+  # = R_BI diag(-1, 1, -1); IMU data (simulation imu.csv, /anymal/imu) stay in this inverted IMU frame
+  imu_extrinsic: {source: model}
+  # Jacobian foot pressure max(-Fz, 0) (the heavy ANYmal legs give large swing-phase |Fz|); EMA per 100 Hz sample
+  pressure:
+    method: jacobian
+    pressure_mode: normal_negative
+    normalize_sum: false
+    damping: 1.0e-4
+    smooth_alpha: 0.5
+    pressure_scale: 1.0
+  # GrandTour (/path/to/GrandTour, README.md there: split rationale) converted by TRAIL
+  # data_scripts/convert_grandtour_to_ros2.py; reference = CPT7 Inertial Explorer TC pose of the base (evaluation only,
+  # missing for the missions without CPT7); imu = /anymal/imu in the IMU frame (up direction of the reference world)
+  # leg_odom_recorder defaults of this robot (ROS parameters given at launch override them)
+  recorder:
+    estimate_contacts: true      # jacobian 闭式运动学 F = J^-T tau（normal_negative），与 S1 仿真数据、S2 准备、S3 worker、S4 重算一致
+    overwrite: true
+  dataset:
+    name: grandtour
+    bag_root: /path/to/grandtour_airleg/bags
+    reference: /path/to/grandtour_airleg/seq/{seq}/robot/traj.txt
+    imu: /path/to/grandtour_airleg/seq/{seq}/robot/imu.csv
+    sequences: [2024-10-01-11-29-55, 2024-10-01-11-47-44, 2024-10-01-12-00-49, 2024-11-02-17-10-25,
+      2024-11-02-17-18-32, 2024-11-02-17-43-10, 2024-11-02-21-12-51, 2024-11-03-07-52-45, 2024-11-03-07-57-34,
+      2024-11-03-08-17-23, 2024-11-03-13-51-43, 2024-11-03-13-59-54, 2024-11-04-10-57-34, 2024-11-04-12-55-59,
+      2024-11-04-13-07-13, 2024-11-04-16-05-00, 2024-11-04-16-52-38, 2024-11-11-12-07-40, 2024-11-11-12-42-47,
+      2024-11-11-14-29-44, 2024-11-11-16-14-23, 2024-11-14-11-17-02, 2024-11-14-12-01-26, 2024-11-14-13-45-37,
+      2024-11-14-14-36-02, 2024-11-14-15-22-43, 2024-11-14-16-04-09, 2024-11-15-10-16-35, 2024-11-15-11-18-14,
+      2024-11-15-11-37-15, 2024-11-15-12-06-03, 2024-11-15-14-14-12, 2024-11-15-14-43-52, 2024-11-15-16-41-14,
+      2024-11-18-12-05-01, 2024-11-18-13-22-14, 2024-11-18-13-48-19, 2024-11-18-15-46-05, 2024-11-18-16-59-23,
+      2024-11-18-17-13-09, 2024-11-18-17-31-36, 2024-11-25-14-57-08, 2024-11-25-16-36-19, 2024-12-03-13-15-38,
+      2024-12-03-13-26-40, 2024-12-09-09-34-43, 2024-12-09-09-41-46, 2024-12-09-11-28-28, 2024-12-09-11-53-11]
+    labels: [ETH-1, ETH-2, ETH-3, SPX-1, SPX-2, SPX-3, ICE-1, SNOW-1, SNOW-2, SNOW-3, EIG-1, EIG-2, GRI-1, CYN-1,
+      CYN-2, HIL-1, RIV-1, PIL-1, PIL-2, ROOT-1, HAUS-1, HOB-1, HOB-2, HEAP-1, KAB-1, KAB-2, KAB-3, TRIM-1, ALB-1,
+      ALB-2, ALB-3, LMB-1, LMB-2, LEE-1, ARC-1, ARC-2, ARC-3, ARC-4, ARC-5, ARC-6, ARC-7, LEICA-1, LEICA-2, SBB-1,
+      SBB-2, CON-1, CON-2, CON-3, CON-4]
+    splits:
+      # Split of the paper: S2 trains on the 28 train missions (validation = segments held out of every
+      # training bag, sim_to_real holdout:); the 17 test missions are the evaluation set of the paper (Normal 8:
+      # PIL-2 HEAP-1 ROOT-1 TRIM-1 LEICA-1 EIG-2 ETH-2 KAB-1, Challenging 9: SPX-3 ETH-1 LEE-1 CON-1 ICE-1 ALB-3 SNOW-3
+      # RIV-1 SBB-1). Train includes 4 official benchmark missions (no ground truth needed for S2).
+      train: [2024-10-01-12-00-49, 2024-11-03-07-52-45, 2024-11-03-07-57-34, 2024-11-03-13-51-43, 2024-11-04-10-57-34,
+        2024-11-04-12-55-59, 2024-11-04-13-07-13, 2024-11-04-16-05-00, 2024-11-11-12-07-40, 2024-11-11-16-14-23,
+        2024-11-14-11-17-02, 2024-11-14-12-01-26, 2024-11-14-15-22-43, 2024-11-14-16-04-09, 2024-11-15-11-18-14,
+        2024-11-15-11-37-15, 2024-11-15-14-14-12, 2024-11-15-14-43-52, 2024-11-18-13-22-14, 2024-11-18-13-48-19,
+        2024-11-18-15-46-05, 2024-11-18-16-59-23, 2024-11-18-17-13-09, 2024-11-25-16-36-19, 2024-12-03-13-26-40,
+        2024-12-09-09-41-46, 2024-12-09-11-28-28, 2024-12-09-11-53-11]
+      val: []
+      test: [2024-10-01-11-29-55, 2024-10-01-11-47-44, 2024-11-02-17-43-10, 2024-11-02-21-12-51, 2024-11-03-08-17-23,
+        2024-11-03-13-59-54, 2024-11-04-16-52-38, 2024-11-11-12-42-47, 2024-11-11-14-29-44, 2024-11-14-13-45-37,
+        2024-11-14-14-36-02, 2024-11-15-10-16-35, 2024-11-15-12-06-03, 2024-11-15-16-41-14, 2024-11-25-14-57-08,
+        2024-12-03-13-15-38, 2024-12-09-09-34-43]
+      # official GrandTour benchmark missions (ground truth prism withheld locally, so never test missions) --
+      # 2024-11-02-17-18-32, 2024-11-03-07-57-34, 2024-11-03-13-51-43, 2024-11-18-13-22-14, 2024-11-18-17-31-36,
+      # 2024-12-09-11-53-11
+
+# ===== simulation: S1：仿真数据上训练腿式里程计网络（train_velocity.py --config <本文件>） =====
+simulation:
+  # S1 ANYmal D: velocity network on the ANYmal IsaacLab simulation at 100 Hz (quadruped/sim/Anymal/Anymal_reshape_100hz,
+  # data_scripts/build_sim_dataset.py --robot anymal). imu.csv is in the inverted IMU frame and rotated into base axes with the
+  # extrinsic of the dataset manifest (common/frames.py); labels are base-frame velocities. Paths relative to this file.
+  robot: anymal
+  data:
+    data_root: /path/to/anymal_sim_100hz   # build_sim_dataset.py --robot anymal
+    sequence_cache_dir: ../../core/3rdparty/TRAIL/runs/anymal_100hz/s1/sequence_npy
+    force_refit_normalizer: true
+    train_stride: 40               # 0.4 s, the same windows per second as 50 at 125 Hz
+    eval_stride: 80
+    stats_stride: 32
+  train:
+    output_dir: ../../core/3rdparty/TRAIL/runs/anymal_100hz/s1
+
+# ===== sim_to_real: S2：真机适配（pipeline.py s2 --robot <名>） =====
+sim_to_real:
+  # S2 ANYmal D on GrandTour (pipeline.py s2 --robot anymal). Common settings: robots/common/leg_odometry.yaml (sim_to_real:); paths
+  # relative to this file. Training = leg_odometry.yaml (robot:) dataset splits.train + splits.val (every bag of bag_root); validation
+  # (model selection) = the segments held out of every training bag (common s2.yaml holdout:).
+  checkpoint: checkpoints/leg_odometry_sim.pt   # ANYmal S1 (leg_odometry.yaml (simulation:))
+  train:
+    output_dir: ../../core/3rdparty/TRAIL/runs/anymal_100hz/s2
+    # every overlapping training window (visual.max_windows: null), 80 random batches x 50 per epoch (4000 windows
+    # per epoch)
+    batches_per_epoch: 80
+  visual:
+    max_windows: null
+  prepare:
+    bag_root: /path/to/grandtour_airleg/s2_bags   # symlinks of the train + val bags (prepare uses every bag here)
+    cache_root: ../../core/3rdparty/TRAIL/runs/anymal_100hz/s2_cache
+    algorithm: algorithm.yaml
+    # S2 preparation VO and BA: without the map point voxel cap (the S2 visual teacher keeps every stereo map point)
+    # and without the IMU (S2 VCE needs pure visual teacher maps: the IMU maps made VCE fail). S3 keeps both.
+    algorithm_overrides:
+      visual_odometry:
+        use_imu: false
+        voxel_cap:
+          enabled: false
+    robot: anymal                    # recorder parameters: leg_odometry.yaml (robot:) recorder:
+    # the 2024-11-18 bags: right camera rotated against the common calibration (camera_2024-11-18.yaml)
+    camera_configs:
+      2024-11-18-13-48-19: camera_2024-11-18.yaml
+      2024-11-18-15-46-05: camera_2024-11-18.yaml
+      2024-11-18-16-59-23: camera_2024-11-18.yaml
+  extrinsic:
+    # T_B_C initial guess = base -> alphasense_front_left from the GrandTour /tf_static (identical on all missions): left
+    # camera 0.446 m ahead, 0.065 m left, 0.213 m above the base origin, pitched ~10 deg down; z forward, y down.
+    init_xyz:
+    - 0.4459659857
+    - 0.0649449895
+    - 0.2125042841
+    init_quat_xyzw:
+    - -0.5368942656
+    - 0.5456208938
+    - -0.4502184938
+    - 0.4597234992
+  alternating:
+    # 2 pure visual adaptation rounds instead of the common 3 (~30 min per full-data epoch with the 28 GrandTour
+    # training sequences), then 4 fused head rounds.
+    rounds: [0, 2, 4]
+
+# ===== online: S3：在线腿式里程计（online_worker.py；launch robot:=<名>） =====
+online:
+  # S3 ANYmal D online leg odometry (online_worker.py; launch robot:=anymal). Common: robots/common/leg_odometry.yaml (online:).
+  robot: anymal
+  checkpoint: checkpoints/leg_odometry.pt   # S2 final checkpoint, GrandTour paper split (released model,
+                                            # retrained after the paper)
+  time_delay: 0.0
+  train:
+    gate:
+      # passive motion (with leg_gate.passive in algorithm.yaml): a keyframe pair with > 0.1 m back-end
+      # motion but no foot moved > 1 cm in B (robot carried) is not used for the online adaptation
+      passive_m: 0.1
+      passive_foot_m: 0.01
+  stationary:
+    # Also the trailing mean angular rate must stay below 0.01 rad/s, so a slow steady body rotation
+    # on planted feet is not zeroed as standing. S3 only: the S2 models were trained with the S2 default
+    # (robots/common/leg_odometry.yaml (sim_to_real:)).
+    gyro_mean_max: 0.01

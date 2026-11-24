@@ -1,0 +1,37 @@
+# Go2 + RealSense D455 infra stereo. Common settings: robots/common/algorithm.yaml (with the shared landmark
+# back-end); paths relative to this file.
+base: ../common/algorithm.yaml
+camera_config_path: camera.yaml
+
+visual_odometry:
+  # Body IMU in the front-end attitude filter and full IMU preintegration factors in the S3 back-end
+  # (settings of robots/anymal/algorithm.yaml without net_gyro); the body IMU's gyro bias must be allowed to vary:
+  # random-walk floor imu_bg_rw_min 0.005; IMU noise and Kalibr extrinsic in camera.yaml.
+  # use_imu:=false restores the IMU-free set-up.
+  use_imu: true
+  # Go2 关闭腿式门控（common 默认打开，ANYmal 保持打开）。
+  leg_gate:
+    enabled: false
+  online:
+    leg:
+      time_delay: 0.0          # t_leg = t_camera + time_delay (s), same as leg_odometry.yaml (online:) (image->IMU offset not compensated)
+    # 脚的位置修正（8 条序列拟合：脚比 FFS 地面高约 59 mm）+ 接触偏移近似常数；每 10 节点求解（common backend.trigger）。
+    surface:
+      foot_corr_roll_deg: -0.1065
+      foot_corr_pitch_deg: -0.2691
+      foot_corr_dz: -0.05925
+    backend:
+      sink_rw: 0.0005
+      imu: true
+      imu_bias_block: 1
+      imu_gravity_free: true
+      imu_ext_rot: true
+      imu_bg_rw_min: 0.005
+      imu_max_dt: 3.0
+      vce_skip_full: true
+      sanity_ext_deg: 30
+
+map_refinement:
+  leg_odom:
+    # 初始全局时间延迟，按 t_leg = t_camera + time_delay 使用，单位为秒。
+    time_delay: 0.0          # t_leg = t_camera + time_delay (s), same as leg_odometry.yaml (online:) (image->IMU offset not compensated)

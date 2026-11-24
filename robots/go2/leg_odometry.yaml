@@ -1,0 +1,101 @@
+# Unitree Go2 的腿式里程计配置：机器人描述 + S1 / S2 / S3。公共设置在 ../common/leg_odometry.yaml（按段深度合并），
+# 相对路径按本文件所在目录解析。
+base: ../common/leg_odometry.yaml
+
+# ===== robot: 机器人描述（运动学模型、频率、足端半径、Jacobian 压力参数、recorder 默认参数、数据集登记；TRAIL common/robot.py） =====
+robot:
+  # Unitree Go2 + RealSense D455 (infra stereo 640x480). Robot descriptor read by TRAIL common/robot.py;
+  # relative paths are relative to this file.
+  name: go2
+  # leg kinematics for the Jacobian foot pressure (MuJoCo XML or URDF with Unitree joint names)
+  model: model/model_go2.xml
+  # lowstate: 500 Hz /lowstate_stamped; the recorder and the network use 125 Hz (every 4th sample)
+  network_rate_hz: 125
+  foot_radius: 0.022             # m (online.surface.foot_radius default)
+  # IMU pose in the base frame (common/frames.py): the model's site 'imu' (-0.02557, 0, 0.04232), no rotation
+  imu_extrinsic: {source: model}
+  # Jacobian foot pressure F = J^-T tau; one definition for S1 data, S2 recorder, S3 worker and S4
+  pressure:
+    method: jacobian
+    pressure_mode: normal_abs
+    normalize_sum: false
+    damping: 1.0e-4
+    smooth_alpha: 0.9
+    pressure_scale: 1.0
+  # real-robot sequences and the lidar SLAM reference (evaluation only, never used for estimation)
+  # leg_odom_recorder defaults of this robot (ROS parameters given at launch override them)
+  recorder:
+    lowstate_topic: /lowstate_stamped
+    estimate_contacts: true      # jacobian 闭式运动学 F = J^-T tau，与 S2 准备、S3 worker、S4 重算一致
+    overwrite: true
+  dataset:
+    name: go2_20260810
+    bag_root: /path/to/go2_data_20260810/bags/20260810
+    # {seq} = sequence name below; reference: TUM trajectory; imu: sample,time,gyro_xyz,acc_xyz (up direction)
+    reference: /path/to/go2_data_20260810/seq/20260810/{seq}_20260810/robot/traj.txt
+    imu: /path/to/go2_data_20260810/seq/20260810/{seq}_20260810/robot/imu.csv
+    sequences: [asphalt_seq1_slop, eee_buildig, eee_carpark, grass_seq1_slope_flat, grass_seq2_flat, hybrid_seq1,
+                stairs_seq1, stairs_seq2]
+    labels: [asphalt, eee_buildig, eee_carpark, grass1, grass2, hybrid, stairs1, stairs2]
+    splits:
+      train: [asphalt_seq1_slop, eee_buildig, grass_seq1_slope_flat, stairs_seq1, stairs_seq2]
+      val: [eee_carpark, grass_seq2_flat, hybrid_seq1]
+
+# ===== simulation: S1：仿真数据上训练腿式里程计网络（train_velocity.py --config <本文件>） =====
+simulation:
+  # S1 Go2: velocity network on the Go2 IsaacLab simulation (robots/go2/checkpoints/leg_odometry_sim.pt).
+  robot: go2
+  data:
+    # built by TRAIL data_scripts/build_sim_dataset.py --robot go2 from /path/to/isaaclab_sim/Go2 (IsaacLab,
+    # 250 Hz -> 125 Hz)
+    data_root: /path/to/go2_sim_125hz
+  train:
+    output_dir: ../../core/3rdparty/TRAIL/runs/s1_go2
+
+# ===== sim_to_real: S2：真机适配（pipeline.py s2 --robot <名>） =====
+sim_to_real:
+  # S2 Go2 (pipeline.py s2 --config this file). Common settings: robots/common/leg_odometry.yaml (sim_to_real:); paths relative to this file.
+  # Every bag of bag_root trains; validation = the segments held out of every training bag (common s2.yaml holdout:).
+  # initialize 使用的预训练速度网络（S1，由 simulation: 段的数据训练）
+  checkpoint: checkpoints/leg_odometry_sim.pt
+  train:
+    output_dir: ../../core/3rdparty/TRAIL/runs/s2_go2v3   # S2 输出目录
+    # 每 epoch 固定 50 批：教师选择改变窗口数时保持训练步数不变
+    batches_per_epoch: 50
+  prepare:
+    bag_root: /path/to/go2_data/train   # 新相机安装的数据
+    cache_root: /path/to/s2_cache_go2   # 签名含 algorithm.yaml：配置变了会重新 prepare
+    algorithm: algorithm.yaml
+    robot: go2                    # recorder parameters: leg_odometry.yaml (robot:) recorder:
+    # 双目自标定在 Go2 上关闭：D455 除了视差偏差（-0.08°，VO 偏长）还有约 -3% 的基线/焦距型比例误差（VO 偏短，图像看不到），
+    # 两者原本相互抵消；只修视差偏差会让 S3 结果变差。基线标定后再打开。
+    # （比例误差也可能在激光雷达真值一侧，需物理测量确认。）
+    stereo_selfcal:
+      enabled: false
+  alternating:
+    # 融合轮 LoRA 在 Go2 上关闭：它让腿式更快贴近上面那约 +3% 的教师尺度；只开纯视觉轮也变差。基线标定后再打开。
+    lora:
+      enabled: false
+    # 教师选择（robots/common/leg_odometry.yaml teacher_select）默认关闭；发布的 Go2 模型是开着 adaptive 训练的，
+    # 要复现它把 enabled 设为 true
+    teacher_select:
+      enabled: false
+  extrinsic:
+    # 给定 T_B_C 外参的平移 xyz，单位米。
+    init_xyz:   # T_B_C = T_B_I T_I_C，Kalibr cam0 T_imu_cam，IMU 在 base 下 (-0.02557, 0, 0.04232)
+    - 0.14007478
+    - 0.04899707
+    - 0.2579377
+    # 旋转四元数 x、y、z、w。
+    init_quat_xyzw:   # Kalibr
+    - -0.493057
+    - 0.503135
+    - -0.504078
+    - 0.499655
+
+# ===== online: S3：在线腿式里程计（online_worker.py；launch robot:=<名>） =====
+online:
+  # S3 Go2 online leg odometry (online_worker.py; launch robot:=go2). Common: robots/common/leg_odometry.yaml (online:).
+  robot: go2
+  checkpoint: checkpoints/leg_odometry.pt  # S2 final checkpoint (released model, adaptive teacher selection), time_delay 0
+  time_delay: 0.0                          # t_leg = t_camera + time_delay (s), same as algorithm.yaml online.leg.time_delay

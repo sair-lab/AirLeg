@@ -1,0 +1,43 @@
+get_filename_component(AIR_SLAM_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+
+set(AIR_SLAM_CORE_SOURCES
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/vertex_vi_pose.cc
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/vertex_imu.cc
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/edge_project_point.cc
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/edge_imu.cc
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/edge_relative_pose.cc
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/edge_leg_odom.cc
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/edge_imu_backend.cc
+  ${AIR_SLAM_ROOT_DIR}/src/g2o_optimization/g2o_optimization.cc
+  ${AIR_SLAM_ROOT_DIR}/src/bow/FSuperpoint.cc
+  ${AIR_SLAM_ROOT_DIR}/src/bow/database.cc
+  ${AIR_SLAM_ROOT_DIR}/src/trt_engine.cpp
+  ${AIR_SLAM_ROOT_DIR}/src/super_point.cpp
+  ${AIR_SLAM_ROOT_DIR}/src/dynamic_segmenter.cpp
+  ${AIR_SLAM_ROOT_DIR}/src/dynamic_segmenter_kernels.cu
+  ${AIR_SLAM_ROOT_DIR}/src/super_point_kernels.cu
+  ${AIR_SLAM_ROOT_DIR}/src/depth_kernels.cu
+  ${AIR_SLAM_ROOT_DIR}/src/feature_detector.cc
+  ${AIR_SLAM_ROOT_DIR}/src/light_glue.cpp
+  ${AIR_SLAM_ROOT_DIR}/src/utils.cc
+  ${AIR_SLAM_ROOT_DIR}/src/camera.cc
+  ${AIR_SLAM_ROOT_DIR}/src/imu.cc
+  ${AIR_SLAM_ROOT_DIR}/src/vce/statistics.cc
+  ${AIR_SLAM_ROOT_DIR}/src/vce/covariance.cc
+  ${AIR_SLAM_ROOT_DIR}/src/vce/experiment.cc
+  ${AIR_SLAM_ROOT_DIR}/src/vce/adjoint.cc
+  ${AIR_SLAM_ROOT_DIR}/src/leg_odom.cc
+  ${AIR_SLAM_ROOT_DIR}/src/online_fusion.cc
+  ${AIR_SLAM_ROOT_DIR}/src/fusion_backend.cc
+  ${AIR_SLAM_ROOT_DIR}/src/frame.cc
+  ${AIR_SLAM_ROOT_DIR}/src/point_matcher.cc
+  ${AIR_SLAM_ROOT_DIR}/src/mappoint.cc
+  ${AIR_SLAM_ROOT_DIR}/src/publisher.cc
+  ${AIR_SLAM_ROOT_DIR}/src/map.cc
+  ${AIR_SLAM_ROOT_DIR}/src/map_builder.cc
+  ${AIR_SLAM_ROOT_DIR}/src/marginal.cc
+  ${AIR_SLAM_ROOT_DIR}/src/landmarks.cc
+  ${AIR_SLAM_ROOT_DIR}/src/map_refiner.cc
+  ${AIR_SLAM_ROOT_DIR}/src/map_user.cc
+  ${AIR_SLAM_ROOT_DIR}/src/apps.cc
+)

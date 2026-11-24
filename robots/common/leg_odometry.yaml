@@ -1,0 +1,591 @@
+# 腿式里程计的公共配置：S1 / S2 / S3 三段，机器人文件 robots/<robot>/leg_odometry.yaml 以本文件为 base，按段深度合并。
+# 相对路径按本文件所在目录解析。S4（回环与全局后端）见 algorithm.yaml 的 global_backend:。
+
+# ===== simulation: S1：仿真数据上训练腿式里程计网络（train_velocity.py --config <本文件>） =====
+simulation:
+  # S1 (train_velocity.py) common settings; robot overlays: AirSLAM2/robots/<robot>/leg_odometry.yaml (simulation:) (base: this file),
+  # which add robot:, data.data_root (simulation set) and train.output_dir. Paths are relative to this file.
+  pressure_normalization:
+    enabled: true
+    offline_window_s: 3.0
+    online_init_s: 1.0
+    online_window_s: 3.0
+    min_total_pressure_ratio: 0.5
+    # 无 time/timestamp/time_s 列时，须配置真实的采样间隔（秒）。
+    sample_dt_s: null
+
+  data:
+    window: 50                                     # 输入时间窗口长度，单位为采样点。
+    predict_angular_velocity: true                  # 保留6轴监督/评估目标；角速度由IMU gyro代替，不由速度分支预测。
+    train_stride: 50                                # 训练集滑窗步长，单位为采样点。
+    eval_stride: 100                                # 验证/测试集滑窗步长，单位为采样点。
+    stats_stride: 40                                # 计算归一化 mean/std 时的抽样步长。
+    use_sequence_cache: true                        # 是否优先读取预处理后的 sequence .npy 缓存。
+    sequence_cache_dir: ../../core/3rdparty/TRAIL/cache/sequence_npy     # sequence .npy 缓存保存目录（按 split/sequence_id 存放）。
+    rebuild_sequence_cache: false                   # 是否在读取时强制重建 sequence 缓存。
+    force_refit_normalizer: false                   # 是否忽略已有 normalizer.npz 并重新计算 mean/std。
+    max_windows_per_sequence: null                  # 每条训练序列最多使用的窗口数，null 表示不限。
+    max_eval_windows_per_sequence: null             # 每条验证/测试序列最多使用的窗口数，null 表示不限。
+    max_train_sequences: 18000                       # 最多使用的 train sequence 数量，null 表示不限。
+    max_val_sequences: 100                          # 最多使用的 val sequence 数量，null 表示不限。
+    # joint_suffixes: ["_pos", "_vel", "_torque"]     # 速度输入使用关节位置、速度、力矩，不使用关节 target。
+    joint_suffixes: ["_pos", "_vel"]     # 速度输入使用关节位置、速度、力矩，不使用关节 target。
+    use_contacts: true                              # 是否使用 contacts.csv 中的足底压力。
+    shuffle_train_windows: true                     # 是否在 DataLoader 层随机打散所有训练窗口。
+    shuffle_train_sequences: true                   # 当不打散窗口时，是否随机打乱 train sequence 顺序。
+    dataset_seed: 42                                # 数据集随机采样与打乱使用的随机种子。
+    sequence_lru_size: 8                            # 内存中缓存的 sequence 数量。
+
+  train:
+    device: auto                                    # 训练设备，auto 表示优先使用 CUDA。
+    epochs: 300                                     # 速度均值阶段训练 epoch 数。
+    uncertainty_epochs: 50                          # 不确定性 head 阶段训练 epoch 数。
+    batch_size: 1024                                # 训练 batch size。
+    num_workers: 16                                  # 训练 DataLoader worker 数量。
+    log_interval: 20                                # 控制台和 batch 级 TensorBoard 日志打印间隔。
+    tensorboard_log_interval: 1                     # epoch 级 TensorBoard 指标写入间隔。
+    print_interval_steps: 20                        # 每隔多少次 iteration 打印 batch loss。
+    val_interval_epochs: 1                          # 每隔多少个 epoch 使用 val 集评估一次。
+    lr: 0.0003                                      # 速度均值阶段 AdamW 学习率。
+    uncertainty_lr: 0.0001                          # 不确定性 head 阶段 AdamW 学习率。
+    weight_decay: 0.00001                           # AdamW 权重衰减系数。
+    grad_clip: 1.0                                  # 梯度范数裁剪阈值。
+    tensorboard:                                    # TensorBoard 可视化配置。
+      enabled: true                                 # 是否写入 TensorBoard event 文件。
+      log_dir: null                                 # 日志目录，null 表示 output_dir/tensorboard。
+
+  eval:
+    batch_size: 2048                                # 验证/测试 batch size。
+    num_workers: 16                                 # 验证/测试 DataLoader worker 数量。
+    per_sequence_metrics: true                      # 是否输出每条 sequence 的单独评估指标。
+    per_sequence_metrics_during_train: true         # 训练过程中是否在每个 epoch 后额外计算 per-sequence 指标。
+    worst_sequence_top_k: 20                        # per-sequence 报告中保留的最差序列数量。
+
+  model:
+    hidden_dim: 128                                 # Transformer 隐藏维度。
+    dropout: 0.1                                    # dropout 概率。
+    transformer_layers: 4                           # Transformer Encoder 层数。
+    transformer_heads: 4                            # Transformer attention head 数。
+    predict_uncertainty: true                       # 是否让 Transformer 额外预测每个速度维度的不确定性。
+    min_log_var: -8.0                               # log variance 裁剪下限。
+    max_log_var: 4.0                                # log variance 裁剪上限。
+
+# ===== sim_to_real: S2：真机适配（pipeline.py s2 --robot <名>） =====
+sim_to_real:
+  # S2: prepare -> initialize（压力归一化 + 外参；无给定外参时估计）-> 纯视觉 BA 教师 -> 交替优化 BA/head+scale。
+  # 公共设置。机器人覆盖配置 AirSLAM2/robots/<robot>/leg_odometry.yaml (sim_to_real:)（base: 本文件）给出 S1 checkpoint、train.output_dir、
+  # prepare 的 bag_root / cache_root / algorithm / recorder_config（可选 validation_sequences）和外参初值 extrinsic.init_*。
+  # All paths are relative to the file that defines them. use_initial_extrinsic=true fixes the supplied T_B_C.
+  # 足底压力归一化设置；统计量只由训练数据拟合并随模型保存。
+  pressure_normalization:
+    # 是否启用按有效承重窗口均值进行足底压力归一化。
+    enabled: true
+    # 离线归一化累计的有效承重时间窗口，单位秒；序列开头可用后续样本补足。
+    offline_window_s: 3.0
+    # 在线归一化开始输出前需要累计的有效承重时间，单位秒。
+    online_init_s: 1.0
+    # 在线归一化保留的最近有效承重时间窗口，单位秒。
+    online_window_s: 3.0
+    # 压力下限相对于训练集平均四足总压力的比例；低于下限的样本不参与窗口均值。
+    min_total_pressure_ratio: 0.5
+  # 速度网络的传感器输入设置，须与预训练模型的输入维度一致。
+  data:
+    # 每个网络输入窗口包含的传感器采样点数。
+    window: 50
+    # 作为网络输入的关节字段后缀；_pos 表示位置，_vel 表示速度。
+    joint_suffixes:
+    - _pos
+    - _vel
+    # 是否将四足压力加入网络输入，并允许启用压力归一化。
+    use_contacts: true
+  # S2 视觉训练设置；output_dir 同时作为整个 S2 的输出根目录。
+  train:
+    # S2 输出根目录 output_dir（机器人覆盖配置）；initialize/ 保存初始化，s22/ 保存交替优化结果。
+    # 计算设备，可填 auto、cpu 或 cuda；auto 优先选择可用 GPU。
+    device: auto
+    # 每个批次包含的相邻关键帧对数量；按 alternating.window 的 5 帧窗口换算为 batch_size // 4 个窗口。
+    # 200 -> 50 个窗口，约适配 32 GB 显存。
+    batch_size: 200
+    # 每轮训练的批次数；null 表示按全部候选帧对数和 batch_size 自动计算。
+    batches_per_epoch: null
+    # DataLoader 子进程数量；0 表示在主进程加载数据。
+    num_workers: 8
+    # 反向传播后可训练参数的梯度范数裁剪上限。
+    grad_clip: 1.0
+    # 每隔多少个训练批次打印一次进度和损失。
+    print_interval_steps: 20
+    # 随机种子，用于对应模块的采样或随机初始化。
+    seed: 42
+  # 按完整积分轨迹对固定纯视觉 BA 的 SE(3) RMSE 选模；验证序列等权，不使用 GT。
+  early_stopping:
+    # 默认开启；false 时融合轮每轮固定 epochs，按视觉损失接受（alternating.visual_tolerance）。
+    enabled: true
+    min_epochs: 5
+    patience: 10
+    min_delta_relative: 0.005
+    round_patience: 2
+    inference_batch_size: 2048
+  # 从每条训练序列留出验证段（common/holdout.py）：从首个关键帧起，每 period_s 秒的最后 length_s 秒为验证段。
+  # 训练帧对不碰验证段，也不从验证段结束后 margin_s 秒内开始（网络输入窗口仍伸进验证段；须不短于 data.window 的时长）；
+  # 验证段组成伪序列 <id>__holdout，早停逐段积分、和固定纯视觉 BA 比较。每条序列只贡献一小段，单条序列失败不会主导验证。
+  # 验证集只用这些段；若仍给出 prepare.validation_sequences，那些 bag 不参加训练并一起验证。
+  holdout:
+    enabled: true
+    period_s: 50.0
+    length_s: 10.0
+    margin_s: 1.0
+  # 静止检测（common/stationary.py）：过去 window_s 秒内所有关节速度 < joint_vel_max、陀螺每轴标准差 < gyro_std_max
+  # （与 gyro_bias 静止判据相同）时，腿式网络输出的速度置零。S2 的 stage4 infer（融合教师、VCE、教师检查）和早停验证都用它，
+  # S3 在线腿式（robots/common/leg_odometry.yaml (online:) stationary:）用同一检测器。否则站立时腿式会缓慢漂移，可能让 S3 前端反复跟丢。
+  stationary:
+    enabled: true
+    window_s: 0.5
+    gyro_std_max: 0.01
+    joint_vel_max: 0.25
+  # 验证集视觉误差评估设置。
+  eval:
+    # 每个批次包含的相邻关键帧对数量；按 5 帧窗口 400 -> 100 个窗口（不反传，显存占用较小）。
+    batch_size: 400
+    # DataLoader 子进程数量；0 表示在主进程加载数据。
+    num_workers: 8
+  # 相邻关键帧配对、视觉几何过滤和序列采样设置。
+  visual:
+    # 每条序列最多保留的候选相邻关键帧对数；null 表示不限制。
+    max_pairs_per_sequence: null
+    # 帧对允许的最小传感器积分时间，单位秒；更短的帧对被过滤。
+    min_robot_dt: 0.01
+    # 帧对允许的最大传感器积分时间，单位秒；null 表示不限制。
+    max_robot_dt: null
+    # 跳过准备阶段 VO 跟丢的关键帧（keyframe_status.csv 中 track_state=lost，位姿来自运动模型、跟踪断点）参与的帧对；
+    # 没有该文件的旧缓存不过滤。
+    skip_lost_keyframes: true
+    # 同样跳过弱跟踪关键帧（track_state=weak，内点少）参与的帧对。
+    skip_weak_keyframes: true
+    # 训练集的窗口总数上限 N（各序列合计，null 不限）。按序列注水平分配额；每条序列先取不重叠窗口（起点间隔 frames-1 个帧对），
+    # 多于配额就在其中均匀等间隔取，不够再依次加入半重叠、3/4 重叠的窗口补足，还不够就全用。每轮步数 = 窗口数 / 每批窗口数。
+    # GrandTour 约 2.3 万个帧对：4000 个窗口约 80 步/epoch（全部重叠窗口 387 步）；Go1、Go2 不足 4000，全部使用。
+    # 验证集固定用不重叠窗口（每个帧对算一次），不受此上限影响。
+    max_windows: 4000
+    # 预测相对平移小于此值时跳过该帧对的视觉损失，单位米；0 表示不按位移过滤。
+    min_pred_translation_m: 0.0
+    # 计算视觉损失所需的最少共同特征 ID 数量。
+    min_matches: 20
+    # 重投影监督使用的最小有效双目深度，单位米。
+    min_depth_m: 0.2
+    # 重投影监督使用的最大有效双目深度，单位米。
+    max_depth_m: 20.0
+    # 重投影残差的 Huber 阈值，单位像素。
+    reprojection_delta_px: 3.0
+    # Sampson 对极残差的 Huber 阈值，单位近似为像素。
+    sampson_delta_px: 1.5
+    # 读取相机文件时是否优先从投影矩阵 P 提取内参。
+    prefer_projection: true
+    # 由基线长度构建双目平移时的符号，通常为 1 或 -1；显式双目外参不受影响。
+    baseline_sign: 1.0
+    # 是否按各序列帧对数量的倒数加权采样，使不同训练序列的期望贡献相同。
+    balance_sequences: true
+  # 视觉监督及正则项的权重设置。
+  loss:
+    # 双向 3D 到 2D 重投影损失的权重。
+    reprojection_weight: 1.0
+    # 缺少有效深度的匹配点所用对极几何损失的权重。
+    epipolar_weight: 0.2
+    # 外参李代数增量先验的权重，仅 use_extrinsic_prior=true 时有效。
+    extrinsic_prior_weight: 0.01
+    # 尺度偏离 target_scale 的平方惩罚权重，须由当前训练阶段启用。
+    scale_prior_weight: 0.5
+    # 相邻传感器采样时刻网络线速度平滑项的权重，须由当前阶段启用。
+    smooth_velocity_weight: 0.001
+    # 网络角速度修正量超出死区后的平方惩罚权重。
+    gyro_correction_weight: 0.1
+    # 角速度修正量逐轴免惩罚的绝对值范围，单位 rad/s。
+    gyro_correction_deadzone: 0.02
+    # 修正量 Δgyr 的时间变化率惩罚；1.0 为较强起点，0 关闭；启用时训练关闭 dropout 避免随机抖动。
+    gyro_correction_smooth_weight: 1.0
+    # 每条序列 Δgyr 时间均值的平方惩罚；零偏由 BA 估计，head 只学零均值的运动相关误差。1 mrad/s 均值对应 0.1。
+    gyro_correction_mean_weight: 1.0e5
+  # 视觉训练阶段设置：extrinsic 只在 initialize 估计外参时运行（给定外参时跳过）；
+  # head 是 S2 每轮训练的模板；epochs、train_network、学习率中的 extrinsic/log_scale 由 alternating 设定。
+  optim:
+    # 按列表顺序执行的视觉训练阶段。
+    stages:
+    # 训练阶段名称，用于选择阶段行为、日志和 checkpoint 命名。
+    - name: extrinsic
+      # 该阶段的训练 epoch 数；0 表示跳过该阶段。
+      epochs: 30
+      # 外参李代数增量的学习率；使用给定外参时外参固定，此项不生效。
+      extrinsic_lr: 0.0003
+      # 线速度尺度参数 log_scale 的学习率；0 表示该阶段不更新尺度。
+      log_scale_lr: 0.0003
+      # 当前阶段开放的网络参数学习率；0 表示不更新网络权重。
+      network_lr: 0.0
+      # 网络训练范围；false 冻结网络，heads 仅训练线速度头和角速度修正头。
+      train_network: false
+      # 该阶段是否启用尺度趋近 target_scale 的先验损失。
+      use_scale_prior: false
+      # 该阶段是否启用相邻传感器采样时刻的线速度平滑损失。
+      use_velocity_smooth: false
+    # 训练阶段名称，用于选择阶段行为、日志和 checkpoint 命名。
+    - name: head
+      # 当前阶段开放的网络参数学习率；0 表示不更新网络权重。
+      network_lr: 1.0e-05
+      # 该阶段是否启用尺度趋近 target_scale 的先验损失。
+      use_scale_prior: true
+      # 该阶段是否启用相邻传感器采样时刻的线速度平滑损失。
+      use_velocity_smooth: true
+  # 机体与相机之间的标定及网络线速度尺度设置；给定外参使用 T_B_C 方向。
+  extrinsic:
+    # true 固定使用下方给定外参；false 先执行几何初始化，再按训练阶段估计外参。
+    use_initial_extrinsic: true
+    # 无给定外参时，用冻结网络运动和视觉 PnP 运动求解手眼外参初值。
+    geometric_initialization:
+      # 几何初始化期望收集的有效相邻关键帧运动对数量。
+      num_pairs: 500
+      # 几何初始化候选池大小相对于 num_pairs 的倍数。
+      candidate_multiplier: 10
+      # 单个帧对进入 PnP 求解所需的最少有效 3D 到 2D 对应点数。
+      min_pnp_points: 20
+      # 接受单个 PnP 运动估计所需的最少内点数。
+      min_pnp_inliers: 20
+      # 接受单个 PnP 运动估计所需的最低内点比例。
+      min_pnp_inlier_ratio: 0.15
+      # PnP RANSAC 的最大迭代次数。
+      pnp_ransac_iterations: 100
+      # PnP RANSAC 判断内点的重投影误差阈值，单位像素。
+      pnp_reprojection_threshold_px: 3.0
+      # PnP RANSAC 的目标置信度，取值应在 0 到 1 之间。
+      pnp_confidence: 0.999
+      # 接受几何初始化所需的最少有效运动对数；不足时初始化失败。
+      min_usable_motions: 50
+      # 单条序列最多贡献 num_pairs 的此比例，用于限制初始化被单一序列主导。
+      max_sequence_fraction: 0.35
+      # 除单位旋转初值外，手眼非线性求解额外尝试的随机旋转初值数量。
+      rotation_restarts: 12
+      # 每次手眼非线性最小二乘求解允许的最大函数评估次数。
+      max_nfev: 500
+      # 允许的最大手眼求解雅可比条件数；超过时拒绝病态初始化结果。
+      max_jacobian_condition: 1000000.0
+      # 几何初始化内部平移残差的归一化尺度，单位米。
+      translation_sigma_m: 0.05
+      # 几何初始化内部旋转残差的归一化尺度，单位弧度。
+      rotation_sigma_rad: 0.1
+      # 随机种子，用于对应模块的采样或随机初始化。
+      seed: 42
+    # 是否对外参相对于其基准变换的李代数增量施加零均值先验。
+    use_extrinsic_prior: true
+    # 给定 T_B_C 外参 init_xyz（米）/ init_quat_xyzw（x、y、z、w）在机器人覆盖配置中；仅 use_initial_extrinsic=true 时使用。
+    # 尺度先验的目标线速度倍率，通常设为 1。
+    target_scale: 1.0
+    # 可学习线速度倍率的下限，仅用于范围保护。
+    scale_min: 0.9
+    # 可学习线速度倍率的上限，仅用于范围保护。
+    scale_max: 1.1
+  # initialize 使用的预训练速度网络 checkpoint 路径 checkpoint（机器人覆盖配置）。
+  # ROS2 bag 到离线训练缓存的数据准备设置；以下各项在机器人覆盖配置中：
+  #   bag_root：包含多个 ROS2 bag 目录的根路径，每个 bag 目录需有 metadata.yaml；
+  #   cache_root：准备缓存根目录，每条序列的地图目录为 cache_root/train或val/序列ID，由 S2 自动传给 VO；
+  #   validation_sequences（可选，默认不设）：整条留作验证的 bag 名称或相对 bag_root 的路径，其余 bag 用于训练；
+  #   algorithm：VO 和默认 BA 使用的算法配置文件（robots/<robot>/algorithm.yaml）；未显式指定相机时从中读取 camera_config_path；
+  #   robot：机器人名（recorder 的参数取 robots/<robot>/leg_odometry.yaml (robot:) 的 recorder: 段，压力估计模型和参数也来自该文件）；
+  #   也可用 recorder_config 指定一个 ROS2 参数文件代替。
+  prepare:
+    # ROS2 bag 播放速度倍率；0.5 表示半速播放，以减小处理积压。
+    playback_rate: 0.5
+    # 只播放准备用到的 topic：auto = 相机配置的左右图像（及 IMU）+ 录制节点的腿式输入；all = 全部；也可以给列表。
+    # 读盘更少，机械硬盘上不会因为读盘卡顿再突发补发。
+    playback_topics: auto
+    # 播放端发布队列深度（0 = rosbag2 默认）。没有记录 QoS 的 bag 默认 keep_last 10，读盘卡顿后突发的消息会被丢掉。
+    playback_qos_depth: 100
+    # bag 播放结束后等待消息处理的时间，单位秒，随后正常停止 VO 和 recorder。
+    drain_seconds: 5.0
+    # 等待 VO/recorder 订阅就绪，包含首次 TensorRT engine 构建时间。
+    readiness_timeout_s: 3600
+    # 双目视差偏差自标定（common/stereo_selfcal.py）：准备前逐条 bag 只用图像估计校正后视差的常数偏差 delta（右相机偏航
+    # 误差造成，按 delta / f 换成等效偏航角）。同一相机配置、同一 UTC 日期的 bag 为一组；有效 bag 的估计一致且中位数
+    # 绝对值不小于 apply_min_deg 时，把该组 cam1 绕 y 轴旋转修正（迭代一次），修正后的相机写在 <cache_root>/stereo_selfcal，
+    # 该组 bag 用它准备。基线 / 焦距型的整体比例误差从图像看不到，不在此修正。S3 没有按任务选相机的机制，同日的测试 bag
+    # 要手动传 report.json 里的修正相机。
+    stereo_selfcal:
+      enabled: true
+      # 每条 bag 均匀取的时刻数，每个时刻与 offsets 秒后的帧配对。
+      anchors: 220
+      offsets: [1.0, 2.0]
+      # 参加估计的帧对平移范围（PnP），单位米。
+      min_translation_m: 0.3
+      max_translation_m: 3.0
+      # 按时间分块重估的块数，块间标准差作为不确定度。
+      blocks: 5
+      # 并行估计的 bag 数（每个约 1–3 分钟、1–2 GB 内存）。
+      workers: 8
+      # 有效 bag：帧对数下限、中位视差上限（像素，近处点对 delta 不敏感）、分块标准差上限（度）。
+      min_pairs: 80
+      max_median_disparity_px: 30.0
+      max_block_std_deg: 0.03
+      # 同组有效 bag 估计的最大差（度），超过不修正。
+      group_tolerance_deg: 0.1
+      # 修正门限（度）：正常日的估计在 ±0.035° 以内。
+      apply_min_deg: 0.05
+      # 第一次旋转量 = 估计 / initial_gain；随后在 refine_bags 条帧对最多的 bag 上重估，用实测增益修正一次。
+      initial_gain: 0.9
+      refine_bags: 3
+  # S2 共用 BA 与网络微调的交替优化设置。
+  alternating:
+    # Sequences processed concurrently within a round (inference, BA / VCE, one subprocess chain each; results keep
+    # the sequence order). 1 = sequential. ~1.5-3 GB RAM per BA of a 1000-2000 keyframe sequence.
+    parallel_sequences: 12
+    # Pure visual (scale / adaptation) rounds compute their logged visual validation loss every N epochs (and at
+    # the last one); head rounds always evaluate every epoch.
+    adaptation_eval_interval: 2
+    # 融合轮的教师检查（common/teacher_check.py）：每条训练序列按 window_s 秒切段，比较纯视觉教师（prepare BA）在机体
+    # 系的路程和当轮腿式速度积分的路程；路程比相对全部训练段中位数偏离超过 tolerance 的段不参加这一轮训练（腿式路程
+    # 不足 min_leg_path_m 的段不判）。纯视觉轮不做：那时的腿式模型还没适应，地形相关的误差会误伤正确的视觉。
+    # 整体尺度偏差与中位数一起抵消。
+    teacher_check:
+      enabled: true
+      window_s: 10.0
+      tolerance: 0.15
+      min_leg_path_m: 1.0
+    # 教师选择（common/teacher_select.py，默认关闭）：按本轮教师的重投影残差、外点率、与陀螺积分的旋转差、10 s 路程比，
+    # 逐帧对选择训练数据，取代上面的跳过跟丢/弱跟踪帧和 teacher_check。adaptive：阈值由本轮数据决定（每项偏离中位数
+    # 超过 tau 个稳健标准差即剔除，纯视觉轮 visual_tau、融合轮 fused_tau），每条序列至少保留上述规则所留帧对的
+    # visual_floor（纯视觉轮）/ 全部（融合轮）。默认关闭，需要时在机器人配置里打开。
+    teacher_select:
+      enabled: false
+      visual_floor: 0.5
+      adaptive: {visual_tau: 2.5, fused_tau: 4.0}
+    # 用窗口 VCE 校准全局 BA 权重，纯视觉轮和验证集仍使用纯视觉地图。
+    vce:
+      enabled: true
+      # map_optimization_backend vce / vce-global 的数值设置；输入地图、速度、相机、外参、时间偏移、输出目录
+      # 由调度器逐轮填入（common/vce.py）。
+      parameters:
+        rotation_sigma: 0.08       # rad；与 LegOdomConfig 定义相同，加在最终残差轴上
+        translation_sigma: 0.08    # m
+        window_frames: 8
+        max_points: 128
+        alpha: [1.0, 1.0]          # 视觉、腿式协方差倍数（不是信息权重）
+        max_outer: 80
+        log_tolerance: 0.05        # max |log(beta)|；被截断的一步不算收敛
+        damping: 0.5
+        alpha_min: 0.0001
+        alpha_max: 100.0
+        max_change_factor: 2.0
+        min_redundancy: 5.0
+        max_condition: 1.0e8
+        rank_tolerance: 1.0e-10    # 均衡化后完整 H 的相对特征值阈值
+        max_iterations: 1000       # 高斯 / 初始鲁棒优化的最大步数
+        # vce-global：整图优化（鲁棒内点选择、固定与 VCE 加权的全局 BA）5 步 LM 的相对代价变化低于此值即结束。
+        # 更小的阈值（如 1e-8）会跑满 max_iterations，而代价早已不变。
+        global_tolerance: 1.0e-6
+        # vce-global：鲁棒视觉内点选择缓存到 <map_file 目录>/vce_global_inliers.txt；只依赖固定的纯视觉地图和门限设置
+        # （缓存键检查），后续 S2 轮复用。
+        inlier_cache: true
+        # vce-global 初值：纯视觉地图在丢跟踪后可能错误重连（相邻关键帧相差数米、几十度，且没有共视路标），全局 BA 要
+        # 很多步才能把这段拉回，达到步数上限时会回退到纯视觉老师。leg_reanchor：相邻关键帧的视觉与腿式相对位姿相差超过
+        # init_gate_t / init_gate_deg、且共视路标少于 init_min_shared 时，用腿式替换这一段再接上后续轨迹和路标。
+        # 没有满足条件的帧对时与 none 完全相同。
+        global_init: leg_reanchor
+        init_gate_t: 0.5           # m
+        init_gate_deg: 15.0        # deg
+        init_min_shared: 20
+        mono_chi2: 5.991
+        stereo_chi2: 7.815
+    # 是否在初始化完成后执行交替优化。
+    enabled: true
+    # 三阶段轮数：[仅尺度, 纯视觉 heads 适应, 融合 heads 优化]；0 跳过对应阶段。
+    rounds: [0, 3, 4]
+    # 每轮 epoch 数；前两阶段完整训练并使用最后模型，第三阶段启用选模/早停。
+    epochs: 30
+    # S2 连续关键帧窗口：相邻边加首帧到后续帧的累计几何监督，训练与验证一致。
+    window:
+      # 每个窗口的关键帧数；只在同一序列内选连续且未被过滤的帧。
+      frames: 5
+      # 窗口最长持续时间（秒）；超过则跳过该窗口。
+      max_seconds: 10.0
+      # 跨帧几何损失相对相邻帧几何损失的权重。
+      cross_frame_weight: 1.0
+    # 第一阶段 log_scale 学习率：冻结整个网络和外参，仅优化线速度尺度。
+    scale_lr: 1.0e-3
+    # 第二、三阶段 log_scale 学习率：两个 heads 训练时小幅调整尺度；0 固定。
+    log_scale_lr: 1.0e-6
+    # backbone 上的 LoRA 适配器：在 phases 列出的轮次与两个 heads 一起训练（adaptation = 纯视觉轮，head = 融合轮），
+    # 其他轮次冻结（含之前轮次训出的适配器）。默认只开融合轮。
+    # 融合轮会让腿式尺度更快贴近视觉教师：教师尺度有偏的机器人（Go2）会变差，在机器人配置里关掉。
+    lora:
+      enabled: true
+      # 训练适配器的轮次。
+      phases: [head]
+      # 适配器学习率（heads 仍用 optim.stages.head.network_lr）。
+      lr: 1.0e-4
+      # 低秩适配器的秩，越大可训练参数越多。
+      rank: 4
+      # LoRA 更新的缩放系数，实际倍率为 alpha / rank。
+      alpha: 8.0
+      # LoRA 分支的 dropout 概率。
+      dropout: 0.05
+      # 是否适配自注意力的 Q/K/V 投影权重。
+      target_attention: true
+      # 是否适配自注意力的输出投影权重。
+      target_attention_output: false
+      # 是否适配 Transformer 前馈层的两个线性权重。
+      target_ffn: true
+      # 适配 backbone 最后多少个 Transformer 层；null 表示全部层。
+      num_layers: 4
+    # 仅关闭 early_stopping 时使用；启用时按固定 BA 轨迹评分接受模型。
+    visual_tolerance: 1.02
+    # 融合 head 轮的隐式超梯度：视觉损失经融合 BA 解 mu* 对腿式边的导数（伴随法，map_optimization_backend vce-adjoint），
+    # 每轮线性化一次后作为线性项加入训练（common/implicit_gradient.py）。需要 vce.enabled；未开启时跳过。
+    # 只训 heads 时在缓存的编码器特征上精确求和；开 LoRA（lora_heads）时编码器特征随适配器变化，每步随机取
+    # lora_sample_legs 条腿式边重算特征、按 总数/抽样数 放大（无偏估计，梯度同时到适配器和 heads）。
+    implicit_gradient:
+      enabled: true
+      lora_sample_legs: 64
+      stationarity_tol: 1.0e-6      # BA 解的平稳性阈值（缩放梯度）；超出时先用 Gauss-Newton 重新收敛
+      max_reconverge_iterations: 100   # Gauss-Newton re-convergence steps (each with backtracking)
+    # 传给 C++ BA 的 leg odometry 参数覆盖项。
+    ba:
+      # 是否在 BA 中优化外参；S2 使用共享标定，当前调度要求设为 false。
+      optimize_extrinsic: false
+      # 是否在 BA 中优化相机与传感器时间延迟；S2 当前调度要求设为 false。
+      optimize_time_delay: false
+      # 是否为 BA 增加六轴速度 bias 优化变量及相应约束。
+      use_bias: false
+    # 陀螺仪零偏：网络输入陀螺仪先减去每条序列的常量零偏。
+    gyro_bias:
+      enabled: true
+      # S2 交替优化开始前将 gyro head 最后一层置零，避免 head 继续携带常量零偏。
+      reset_gyro_head: true
+      # 是否在 VCE 全局 BA 中逐关键帧估计零偏（需要 vce.enabled）。默认 false：零偏固定为下面的初值；
+      # BA 估计在长序列上会偏离静止值。
+      estimate: false
+      # 以下两项只在 estimate: true 时使用。零偏随机游走标准差，单位 rad/s/sqrt(s)。
+      random_walk_sigma: 1.0e-3
+      # 首个关键帧零偏相对初值的先验标准差，单位 rad/s。
+      prior_sigma: 0.02
+      # 每条序列的常量零偏初值，写入 s22/prepare/<id>/gyro_bias_init.{csv,json}。
+      init:
+        # mixed：x/y 取整条序列静止窗口的中位数，z 取视觉估计（静止段 z 估计偏低）；无静止窗口时三轴都用视觉估计。
+        # static：静止窗口中位数，无静止窗口时用视觉估计。visual：三轴都用视觉估计。
+        # file：读 initial_dir/<序列 id>.csv。network_mean：原始网络修正量均值的相反数。
+        mode: mixed
+        # mode: file 时的零偏目录（time,bgx,bgy,bgz，单位 rad/s）。
+        initial_dir: null
+        # 视觉估计与静止估计差值超过该值（mrad/s）时打印警告。
+        warn_difference_mrad_s: 1.0
+        static:
+          # 静止判定窗口长度和滑动步长，单位秒。
+          window_s: 1.0
+          step_s: 0.5
+          # 窗口内陀螺仪每轴标准差上限，单位 rad/s（噪声约 0.0065）。
+          gyro_std_max: 0.01
+          # 窗口内关节速度绝对值上限，单位 rad/s（噪声约 0.14）。
+          joint_vel_max: 0.25
+          # 至少多少个静止窗口才采用静止估计。
+          min_windows: 3
+        visual:
+          # 纯视觉 BA 关键帧对的时间跨度，单位秒；残差为相对旋转 Log(R_vis^T R_gyro)。
+          window_s: 20.0
+          # Huber 鲁棒核阈值，单位度。
+          huber_deg: 1.0
+    # 网络推理设置；视觉训练沿用上方 train、loss 和 optim.stages 中的 head 阶段，并由本节覆盖训练范围。
+    finetune:
+      # 推理计算设备，可填 auto、cpu 或 cuda。
+      device: auto
+      # 网络推理时每批处理的传感器历史窗口数量。
+      inference_batch_size: 4096
+
+# ===== online: S3：在线腿式里程计（online_worker.py；launch robot:=<名>） =====
+online:
+  # S3 online leg odometry (online_worker.py), common settings. Robot overlays AirSLAM2/robots/<robot>/leg_odometry.yaml (online:)
+  # (base: this file) add robot:, checkpoint (S2 final_checkpoint, s22/result.json) and time_delay.
+  # The S2 checkpoint is only read; LoRA adapters are created in memory at zero each run.
+  device: auto
+  buffer_s: 120.0                          # sensor history kept for training / bias (s)
+  max_gap_s: null                 # sensor gap that restarts the network window; null = max(0.05 s, 2.5 sample periods of leg_odometry.yaml (robot:) network_rate_hz)
+
+  extrinsic:
+    T_C_B: null                            # [tx,ty,tz,qx,qy,qz,qw]; null -> checkpoint visual calibration
+
+  contact:                                 # Jacobian pressure settings and model: robots/<robot>/leg_odometry.yaml (robot:)
+    # model / pressure_mode / damping / smooth_alpha (EMA of the network input) override the robot descriptor
+    enter: 0.20                            # contact uses UNSMOOTHED load-normalised pressure
+    exit: 0.10                             # (trot on grass: swing < 0.08 ~30%, stance median ~0.25)
+    min_stable_s: 0.02
+
+  bias:                                    # gyro bias: static init, then the back-end's or a visual GN estimate
+    # source: backend = the back-end's total gyro bias (/airslam/backend/gyro_bias; needs algorithm.yaml
+    # online.backend.gyro_bias_total, as in robots/common/algorithm.yaml) replaces the static init once it arrives, no
+    # visual GN; visual = the worker's own visual GN below (min_window_s ... update_every_s)
+    source: backend
+    init_s: 2.0                            # initialisation window (robot standing still)
+    static_window_s: 0.5
+    static_step_s: 0.25
+    static_min_windows: 2
+    gyro_std_max: 0.01
+    joint_vel_max: 0.25
+    # static windows also need every joint angle's least-squares slope below this (rad/s). The joint-speed test above
+    # is loose (encoder velocity noise ~0.15 rad/s on a standing Go2), so a slow posture change with the feet planted
+    # would pass and its base rotation would become the bias. Standing Go2 <= 0.0005 rad/s, ANYmal posture changes
+    # >= 0.0016. No static window -> bias 0.
+    joint_drift_max: 0.002
+    min_window_s: 6.0                      # first visual update once matured keyframes span this
+    max_window_s: 120.0                    # window grows up to this fixed size
+    pair_s: 20.0                           # keyframe pair spacing (min(pair_s, span/3))
+    huber_deg: 1.0
+    iterations: 6
+    max_rms_deg: 3.0
+    max_step: 0.01                         # rad/s per update
+    ema: 0.5
+    update_every_s: 5.0                    # visual bias update period (keyframe time)
+
+  stationary:                              # zero twist while standing (common/stationary.py; same as S2 stationary:)
+    enabled: true                          # trailing window_s: all joint speeds < joint_vel_max and gyro std < gyro_std_max
+    window_s: 0.5
+    gyro_std_max: 0.01
+    joint_vel_max: 0.25
+
+  lora:                                    # online_adapt with train.params lora; rank 1, last-layer FFN (1280 parameters)
+    rank: 1
+    alpha: 4.0
+    dropout: 0.0
+    num_layers: 1
+    target_attention: false
+    target_ffn: true
+
+  train:                                   # online_adapt only; rounds, not epochs
+    # trainable parameters: lora (backbone adapters above) | velocity_head_last (last Linear of the linear-velocity head,
+    # 387 parameters) | heads_last; more than max_params is an error.
+    # Default: lora lr 3e-4 with linear_only (the adapters change the linear velocity only; gyro head and variances
+    # read the S2 feature).
+    params: [lora]
+    max_params: 10000
+    linear_only: true
+    # back-end quality gate (needs back-end supervision, online.leg_lora: the front-end path is the reference): a
+    # keyframe pair is bad on a tracking gap (> k_gap x running median), a keyframe missing from the front-end path, or a
+    # back-end / front-end relative-pose disagreement > k x running median (floors floor_m / floor_deg); a round trains
+    # only with >= min_good good pairs of its window, and only on those
+    gate: {enabled: true, k_gap: 3.0, k: 5.0, floor_m: 0.002, floor_deg: 0.05, min_good: 6}
+    mature_lag: 10                         # newest path keyframes not used: the back-end still updates its window
+    train_every: 3                         # new matured keyframes per round
+    kf_window: 10                          # batch = consecutive pairs of the latest matured keyframes
+    steps: 5                               # AdamW full-batch steps per round
+    lr: 3.0e-4
+    weight_decay: 0.0
+    grad_clip: 1.0
+    anchor: 1.0e-4                         # weak L2 to the initial (S2) parameters
+    tol: 1.0                               # accept if held-out loss does not increase
+    rollback_ratio: 1.2                    # adapter loss / S2 loss above this ...
+    rollback_patience: 3                   # ... for this many rounds resets the parameters to S2
+    loss_config: {}                        # loss setting overrides (stage4.py)
+    # leg latency (on by default): separate_process = LoRA rounds in a spawned process (no GIL shared with the
+    # inference loop); shared_prefix = linear_only inference with a shared encoder prefix (layers before the first
+    # adapter run once; same outputs)
+    separate_process: true
+    shared_prefix: true
+
+  trt:                                     # TensorRT inference of the leg network; off / unavailable -> PyTorch
+    enabled: true                          # on by default; needs the tensorrt Python package, else PyTorch
+    precision: fp32                        # fp32 | fp16
+    max_batch: 64                          # larger batches are split
+    cache_dir: ~/.cache/trail_leg_trt      # engines keyed by checkpoint / config / TensorRT / GPU
+    check_tol: 5.0e-3                      # max |TRT - PyTorch| linear velocity at the switch-over

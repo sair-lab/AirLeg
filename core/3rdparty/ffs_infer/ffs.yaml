@@ -1,0 +1,16 @@
+# Runtime configuration. The engine has a fixed shape; these values must match
+# the arguments used when exporting the ONNX model.
+# Model files in AirSLAM2/robots/common/models (relative to this file): the ONNX is tracked (export settings beside it in
+# fast_foundationstereo_plugin.yaml), the engine is GPU-specific and git-ignored.
+engine: ../../../robots/common/models/fast_foundationstereo.engine
+# Used to build the engine automatically when it does not exist.
+onnx: ../../../robots/common/models/fast_foundationstereo_plugin.onnx
+image_height: 384
+image_width: 512
+input_color: BGR
+
+# Informational model-build settings (already compiled into the engine).
+precision: FP16
+valid_iters: 4
+max_disp: 192
+checkpoint: 20-30-48
