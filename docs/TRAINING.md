@@ -363,9 +363,10 @@ L = w_repr L_reprojection + w_epi L_epipolar + w_ext L_extrinsic_prior + w_scale
   replaces only `x y z` with the BA points. Observations are matched by timestamp and left-image pixel. Points lost
   in BA become NaN and fall back to the epipolar loss. No BA relative-pose loss is used.
 - **Teacher filtering.**
-  - `teacher_check` (on): removes the 10 s segments whose visual path length disagrees with the leg path length.
-  - `teacher_select` (off by default): selects keyframe pairs by robust statistics of the round's teacher
-    (reprojection residual, outlier rate, rotation against the gyro, path-ratio deviation).
+  - `teacher_check` (used when `teacher_select` is off): removes the 10 s segments whose visual path length disagrees
+    with the leg path length.
+  - `teacher_select` (on by default; replaces `teacher_check`): selects keyframe pairs by robust statistics of the
+    round's teacher (reprojection residual, outlier rate, rotation against the gyro, path-ratio deviation).
 - **Keyframe windows** (`alternating.window`, default `frames: 5`, `max_seconds: 10`). Training and validation use
   windows of consecutive keyframes.
   - Each window adds the motion from its first frame to every later frame, weighted by `cross_frame_weight`, to the

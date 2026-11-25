@@ -345,12 +345,12 @@ sim_to_real:
       window_s: 10.0
       tolerance: 0.15
       min_leg_path_m: 1.0
-    # 教师选择（common/teacher_select.py，默认关闭）：按本轮教师的重投影残差、外点率、与陀螺积分的旋转差、10 s 路程比，
+    # 教师选择（common/teacher_select.py，默认打开）：按本轮教师的重投影残差、外点率、与陀螺积分的旋转差、10 s 路程比，
     # 逐帧对选择训练数据，取代上面的跳过跟丢/弱跟踪帧和 teacher_check。adaptive：阈值由本轮数据决定（每项偏离中位数
     # 超过 tau 个稳健标准差即剔除，纯视觉轮 visual_tau、融合轮 fused_tau），每条序列至少保留上述规则所留帧对的
-    # visual_floor（纯视觉轮）/ 全部（融合轮）。默认关闭，需要时在机器人配置里打开。
+    # visual_floor（纯视觉轮）/ 全部（融合轮）。关闭：在机器人配置里设 enabled: false（回到上面的旧规则）。
     teacher_select:
-      enabled: false
+      enabled: true
       visual_floor: 0.5
       adaptive: {visual_tau: 2.5, fused_tau: 4.0}
     # 用窗口 VCE 校准全局 BA 权重，纯视觉轮和验证集仍使用纯视觉地图。

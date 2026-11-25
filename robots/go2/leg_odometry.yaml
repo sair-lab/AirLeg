@@ -76,10 +76,6 @@ sim_to_real:
     # 融合轮 LoRA 在 Go2 上关闭：它让腿式更快贴近上面那约 +3% 的教师尺度；只开纯视觉轮也变差。基线标定后再打开。
     lora:
       enabled: false
-    # 教师选择（robots/common/leg_odometry.yaml teacher_select）默认关闭；发布的 Go2 模型是开着 adaptive 训练的，
-    # 要复现它把 enabled 设为 true
-    teacher_select:
-      enabled: false
   extrinsic:
     # 给定 T_B_C 外参的平移 xyz，单位米。
     init_xyz:   # T_B_C = T_B_I T_I_C，Kalibr cam0 T_imu_cam，IMU 在 base 下 (-0.02557, 0, 0.04232)

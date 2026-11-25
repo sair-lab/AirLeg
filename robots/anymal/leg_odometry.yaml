@@ -147,6 +147,8 @@ sim_to_real:
     # 2 pure visual adaptation rounds instead of the common 3 (~30 min per full-data epoch with the 28 GrandTour
     # training sequences), then 4 fused head rounds.
     rounds: [0, 2, 4]
+    # Teacher selection is on by default (robots/common/leg_odometry.yaml). The released ANYmal model was trained with
+    # it off: set teacher_select: {enabled: false} here to reproduce it.
 
 # ===== online: S3：在线腿式里程计（online_worker.py；launch robot:=<名>） =====
 online:
