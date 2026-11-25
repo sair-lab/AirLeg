@@ -21,35 +21,34 @@
 </p>
 
 <p align="center"><strong>
-    <a href="TODO_PAPER_URL">&#128196; [Paper]</a> |
+    <a href="https://arxiv.org/pdf/2611.32523v1">&#128196; [Paper]</a> |
     <a href="https://sairlab.org/AirLeg_homepage/">&#127760; [Project Page]</a> |
-    <a href="https://github.com/sair-lab/AirLeg">&#128187; [Code]</a> |
-    <a href="TODO_YOUTUBE_URL">&#127909; [YouTube]</a> |
+    <a href="https://youtu.be/1msC9zUWUFM">&#127909; [YouTube]</a> |
     <a href="#data">&#128190; [Data]</a>
 </strong></p>
 
 <!-- TODO: teaser figure, e.g. <p align="center"><img src="figures/airleg_teaser.jpg" width="700"/></p> -->
 
 **AirLeg** is a self-supervised visual-inertial-leg (VIL) SLAM system for legged robots. It needs only a stereo camera
-on top of the robot's onboard IMU and joint encoders. Vision and leg proprioception improve each other from training to
-deployment:
+on top of the robot's onboard IMU and joint encoders, and vision and leg proprioception improve each other from training
+to deployment:
 
-- **Simulation pre-training (S1).** A transformer leg-odometry network is trained in simulation. It maps IMU, joint and
-  foot-pressure windows to body velocity.
-- **Sim-to-real adaptation without ground truth (S2).** The network adapts to the real robot through imperative
-  learning. Multi-sensor bundle adjustment uses the leg odometry to refine the visual map, and the refined map in turn
-  supervises the network.
-- **Online fusion and adaptation (S3).** A dual-window estimator fuses vision, IMU and leg odometry in real time.
-  - A deformation-aware constraint relates the loaded feet to the visually reconstructed terrain.
-  - Variance component estimation (VCE) weights the constraints.
-  - The fused estimates keep adapting the network online.
+- **Simulation pre-training (S1).** A transformer leg-odometry network maps IMU, joint and foot-pressure windows to body
+  velocity.
+- **Sim-to-real adaptation without ground truth (S2).** Multi-sensor bundle adjustment uses the leg odometry to refine
+  the visual map, which in turn supervises the network.
+- **Online fusion and adaptation (S3).** A dual-window estimator fuses vision, IMU and leg odometry in real time, with a
+  deformation-aware foot-terrain constraint and variance component estimation (VCE), and keeps adapting the network
+  online.
 - **Offline global back end (S4, optional).** Loop closure and full-sequence optimization of a saved S3 map.
 
-AirLeg completes all 17 GrandTour sequences with the lowest average error (0.19 m) among 19 methods. On a low-cost
-Unitree Go2 it achieves the lowest drift (0.6 %) with only 0.5 h of unlabeled data, in real time on an embedded computer.
+AirLeg completes all 17 GrandTour sequences with the lowest average error (0.19 m) among 19 methods, and reaches the
+lowest drift (0.6 %) on a low-cost Unitree Go2 from only 0.5 h of unlabeled data, in real time on an embedded computer.
+It is built on [AirSLAM](https://github.com/sair-lab/AirSLAM).
 
-AirLeg is built on [AirSLAM](https://github.com/sair-lab/AirSLAM). It reuses AirSLAM's TensorRT feature front end
-(SuperPoint + LightGlue) and map back end.
+<p align="center">
+  <a href="https://youtu.be/1msC9zUWUFM" target="_blank"><img src="figures/video.jpg" width="800" alt="AirLeg video"/></a>
+</p>
 
 ## Documentation
 
@@ -285,9 +284,9 @@ If you find AirLeg useful, please cite:
   title   = {{AirLeg}: A Robust and Accurate Self-Supervised Visual-Inertial-Leg {SLAM} System},
   author  = {Xu, Kuan and Hu, Tianxin and Bai, Ruofei and Liu, Ruimeng and Hao, Yuefan and Jiang, Zeyu and
              Zhan, Zitong and Yuan, Shenghai and Wang, Chen and Xie, Lihua},
-  journal = {TODO},
+  journal = {arXiv preprint arXiv:2611.32523},
   year    = {2026},
-  url     = {TODO_PAPER_URL},
+  url     = {https://arxiv.org/abs/2611.32523},
 }
 ```
 
