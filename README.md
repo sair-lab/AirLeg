@@ -23,7 +23,7 @@
 <p align="center"><strong>
     <a href="https://arxiv.org/pdf/2611.32523v1">&#128196; [Paper]</a> |
     <a href="https://sairlab.org/AirLeg_homepage/">&#127760; [Project Page]</a> |
-    <a href="https://youtu.be/1msC9zUWUFM">&#127909; [YouTube]</a> |
+    <a href="https://youtu.be/_u-APYqosS4">&#127909; [YouTube]</a> |
     <a href="#data">&#128190; [Data]</a>
 </strong></p>
 
@@ -47,7 +47,7 @@ lowest drift (0.6 %) on a low-cost Unitree Go2 from only 0.5 h of unlabeled data
 It is built on [AirSLAM](https://github.com/sair-lab/AirSLAM).
 
 <p align="center">
-  <a href="https://youtu.be/1msC9zUWUFM" target="_blank"><img src="figures/video.jpg" width="800" alt="AirLeg video"/></a>
+  <a href="https://youtu.be/_u-APYqosS4" target="_blank"><img src="figures/video.jpg" width="800" alt="AirLeg video"/></a>
 </p>
 
 ## Documentation
